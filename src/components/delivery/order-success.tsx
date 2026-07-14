@@ -12,7 +12,7 @@ import {
 } from "@/lib/data";
 import { formatPrice } from "@/lib/format";
 import type { Order } from "@/lib/types";
-import { CheckCircle2, MapPin } from "lucide-react";
+import { CheckCircle2, MapPin, UtensilsCrossed, Wallet } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
@@ -37,6 +37,8 @@ export function OrderSuccess({
     setOrder(initialOrder);
   }
 
+  const dineIn = order.order_type === "dine_in";
+
   // Владелец заказа (или демо-режим) читает строку целиком и слушает realtime
   const canReadOrder = !isSupabaseConfigured || Boolean(user);
 
@@ -50,9 +52,9 @@ export function OrderSuccess({
     return subscribeOrders(load);
   }, [initialOrder.id, canReadOrder]);
 
-  // Гость строку заказа читать не может (RLS), поэтому статус спрашиваем
-  // отдельной функцией и опрашиваем её по таймеру: realtime-события до
-  // неавторизованного клиента тоже не доходят.
+  // Гость за столом строку заказа читать не может (RLS), поэтому статус
+  // спрашиваем отдельной функцией и опрашиваем её по таймеру: realtime-события
+  // до неавторизованного клиента тоже не доходят.
   useEffect(() => {
     if (canReadOrder) return;
     let stopped = false;
@@ -68,6 +70,8 @@ export function OrderSuccess({
     };
   }, [initialOrder.id, canReadOrder]);
 
+  const subtotal = order.total - order.delivery_fee;
+
   return (
     <div className="mx-auto max-w-2xl">
       <div className="flex flex-col items-center gap-4 text-center">
@@ -77,17 +81,19 @@ export function OrderSuccess({
           принята!
         </h1>
         <p className="max-w-md text-muted">
-          Ожидайте звонка для подтверждения. Мы готовим ваш заказ.
+          {dineIn
+            ? `Заказ уже на кухне. Подадим к столу №${order.table_number}.`
+            : "Ожидайте звонка для подтверждения. Мы готовим ваш заказ."}
         </p>
       </div>
 
       <div className="mt-8">
-        <StatusTracker status={order.status} />
+        <StatusTracker status={order.status} type={order.order_type} />
       </div>
 
       <p className="mt-4 text-center text-xs text-muted">
         Статус заказа обновляется автоматически. Сохраните номер заявки — по нему
-        можно уточнить заказ по телефону.
+        можно уточнить заказ у персонала.
       </p>
 
       <Card className="mt-8">
@@ -111,22 +117,62 @@ export function OrderSuccess({
               </li>
             ))}
           </ul>
-          <div className="mt-4 flex items-center justify-between border-t border-line pt-4">
-            <span className="text-muted">Итого:</span>
-            <span className="font-heading text-xl font-extrabold">
-              {formatPrice(order.total)}
-            </span>
+
+          <div className="mt-4 space-y-1.5 border-t border-line pt-4 text-sm">
+            {order.delivery_fee > 0 && (
+              <>
+                <div className="flex items-center justify-between text-muted">
+                  <span>Блюда</span>
+                  <span className="tabular-nums">{formatPrice(subtotal)}</span>
+                </div>
+                <div className="flex items-center justify-between text-muted">
+                  <span>Доставка</span>
+                  <span className="tabular-nums">
+                    {formatPrice(order.delivery_fee)}
+                  </span>
+                </div>
+              </>
+            )}
+            <div className="flex items-center justify-between pt-1">
+              <span className="text-muted">Итого:</span>
+              <span className="font-heading text-xl font-extrabold tabular-nums">
+                {formatPrice(order.total)}
+              </span>
+            </div>
           </div>
-          <p className="mt-4 flex items-start gap-2 text-sm text-muted">
-            <MapPin className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden />
-            {order.address}
-          </p>
+
+          {dineIn ? (
+            <div className="mt-4 space-y-2 text-sm text-muted">
+              <p className="flex items-start gap-2">
+                <UtensilsCrossed
+                  className="mt-0.5 size-4 shrink-0 text-primary"
+                  aria-hidden
+                />
+                Стол №{order.table_number}
+              </p>
+              <p className="flex items-start gap-2">
+                <Wallet
+                  className="mt-0.5 size-4 shrink-0 text-primary"
+                  aria-hidden
+                />
+                Оплата на кассе, когда будете уходить
+              </p>
+            </div>
+          ) : (
+            <p className="mt-4 flex items-start gap-2 text-sm text-muted">
+              <MapPin
+                className="mt-0.5 size-4 shrink-0 text-primary"
+                aria-hidden
+              />
+              {order.address}
+            </p>
+          )}
         </CardBody>
       </Card>
 
       <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
         <Link href="/menu" className={buttonClasses("secondary", "md")}>
-          Вернуться в меню
+          {dineIn ? "Заказать ещё" : "Вернуться в меню"}
         </Link>
         {onDismiss && (
           <Button variant="ghost" onClick={onDismiss}>

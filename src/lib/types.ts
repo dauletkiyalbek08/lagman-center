@@ -8,9 +8,18 @@ export type OrderStatus =
   | "delivered"
   | "cancelled";
 
+/** `dine_in` — заказ за столом по QR-коду, `delivery` — доставка на адрес */
+export type OrderType = "delivery" | "dine_in";
+
+export type PaymentStatus = "unpaid" | "paid";
+
 export type ReservationStatus = "new" | "confirmed" | "cancelled";
 
-export type PaymentMethod = "cash" | "card" | "kaspi";
+/** `counter` — оплата на кассе (заказ в зале) */
+export type PaymentMethod = "cash" | "card" | "kaspi" | "counter";
+
+/** Способы оплаты, которые клиент выбирает сам (только доставка) */
+export type DeliveryPaymentMethod = Exclude<PaymentMethod, "counter">;
 
 export interface Establishment {
   id: string;
@@ -47,17 +56,60 @@ export interface Order {
   order_number: string;
   customer_id: string | null;
   status: OrderStatus;
+  order_type: OrderType;
+  /** Стол (только для заказа в зале) */
+  table_id: string | null;
+  /**
+   * Номер стола копией в самом заказе: кухня и курьер не имеют прав
+   * на таблицу столов, а номер им нужен.
+   */
+  table_number: number | null;
+  /** Сумма с доставкой */
   total: number;
-  address: string;
-  phone: string;
+  delivery_fee: number;
+  /** null у заказа в зале */
+  address: string | null;
+  phone: string | null;
   customer_name: string;
   payment_method: PaymentMethod;
+  payment_status: PaymentStatus;
   comment: string | null;
   /** Курьер, забравший заказ в доставку */
   courier_id: string | null;
   created_at: string;
   updated_at: string;
   items: OrderItem[];
+}
+
+/** Стол в зале (панель администратора) */
+export interface Table {
+  id: string;
+  number: number;
+  seats: number;
+  zone: string | null;
+  /** Код в QR-ссылке /t/<code> */
+  code: string;
+  is_active: boolean;
+  /** Гости за столом — отмечает официант/админ или заказ по QR */
+  is_occupied: boolean;
+  created_at: string;
+}
+
+/** Что видит гость, отсканировавший QR-код стола */
+export interface GuestTable {
+  id: string;
+  number: number;
+  seats: number;
+  zone: string | null;
+}
+
+/** Настройки доставки (одна строка в БД) */
+export interface Settings {
+  delivery_fee: number;
+  /** 0 — бесплатной доставки нет */
+  free_delivery_from: number;
+  /** 0 — минимальной суммы нет */
+  min_order: number;
 }
 
 export interface Reservation {
@@ -68,6 +120,7 @@ export interface Reservation {
   time: string;
   guests: number;
   establishment_id: string;
+  table_id: string | null;
   status: ReservationStatus;
   created_at: string;
 }
@@ -77,6 +130,7 @@ export interface Profile {
   role: Role;
   name: string | null;
   phone: string | null;
+  address: string | null;
 }
 
 /** Сотрудник в панели администратора (профиль + email из auth) */
@@ -98,8 +152,11 @@ export interface NewStaffInput {
 }
 
 export interface NewOrderInput {
-  address: string;
-  phone: string;
+  order_type: OrderType;
+  /** Код стола из QR — обязателен для заказа в зале */
+  table_code?: string;
+  address?: string;
+  phone?: string;
   customer_name: string;
   payment_method: PaymentMethod;
   comment?: string;
@@ -113,4 +170,10 @@ export interface NewReservationInput {
   time: string;
   guests: number;
   establishment_id: string;
+}
+
+export interface NewTableInput {
+  number: number;
+  seats: number;
+  zone?: string;
 }

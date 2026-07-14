@@ -4,7 +4,14 @@ import { cn } from "@/lib/cn";
 import { PAYMENT_METHOD_LABELS } from "@/lib/constants";
 import { formatPrice, formatTime } from "@/lib/format";
 import type { Order } from "@/lib/types";
-import { Clock, MapPin, MessageSquare, Phone, User } from "lucide-react";
+import {
+  Clock,
+  MapPin,
+  MessageSquare,
+  Phone,
+  User,
+  UtensilsCrossed,
+} from "lucide-react";
 import type { ReactNode } from "react";
 
 /** tel:-ссылка без пробелов и скобок */
@@ -43,11 +50,19 @@ export function OrderTicket({
   return (
     <Card className={cn("flex flex-col", className)}>
       <CardBody className="flex flex-1 flex-col gap-4">
-        {/* Шапка чека: номер + время */}
+        {/* Шапка чека: номер + время (+ стол, если заказ в зале) */}
         <div className="flex items-start justify-between gap-3">
           <div>
-            <div className="font-heading text-2xl font-extrabold tracking-tight">
-              {order.order_number}
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-heading text-2xl font-extrabold tracking-tight">
+                {order.order_number}
+              </span>
+              {order.order_type === "dine_in" && (
+                <span className="inline-flex items-center gap-1 rounded-full border border-primary/40 bg-primary/15 px-2.5 py-0.5 text-sm font-bold text-primary">
+                  <UtensilsCrossed className="size-3.5" aria-hidden />
+                  Стол №{order.table_number}
+                </span>
+              )}
             </div>
             <div className="mt-1 flex items-center gap-1.5 text-sm text-muted">
               <Clock className="size-4" aria-hidden />
@@ -102,29 +117,33 @@ export function OrderTicket({
           </div>
         )}
 
-        {/* Контакты клиента */}
+        {/* Контакты клиента (у заказа в зале их может не быть) */}
         {showContacts && (
           <div className="space-y-2 text-sm">
-            <div className="flex items-start gap-2">
-              <MapPin
-                className="mt-0.5 size-4 shrink-0 text-primary"
-                aria-hidden
-              />
-              <span>{order.address}</span>
-            </div>
+            {order.address && (
+              <div className="flex items-start gap-2">
+                <MapPin
+                  className="mt-0.5 size-4 shrink-0 text-primary"
+                  aria-hidden
+                />
+                <span>{order.address}</span>
+              </div>
+            )}
             <div className="flex items-center gap-2">
               <User className="size-4 shrink-0 text-muted" aria-hidden />
-              <span>{order.customer_name}</span>
+              <span>{order.customer_name || "Гость"}</span>
             </div>
-            <div className="flex items-center gap-2">
-              <Phone className="size-4 shrink-0 text-muted" aria-hidden />
-              <a
-                href={telHref(order.phone)}
-                className="transition-colors hover:text-primary"
-              >
-                {order.phone}
-              </a>
-            </div>
+            {order.phone && (
+              <div className="flex items-center gap-2">
+                <Phone className="size-4 shrink-0 text-muted" aria-hidden />
+                <a
+                  href={telHref(order.phone)}
+                  className="transition-colors hover:text-primary"
+                >
+                  {order.phone}
+                </a>
+              </div>
+            )}
           </div>
         )}
 

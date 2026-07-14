@@ -1,9 +1,9 @@
 import { cn } from "@/lib/cn";
-import { ORDER_STATUS_LABELS } from "@/lib/constants";
-import type { OrderStatus } from "@/lib/types";
+import { orderStatusLabel } from "@/lib/constants";
+import type { OrderStatus, OrderType } from "@/lib/types";
 import { Check, XCircle } from "lucide-react";
 
-const STEPS: OrderStatus[] = [
+const DELIVERY_STEPS: OrderStatus[] = [
   "new",
   "cooking",
   "ready",
@@ -11,8 +11,19 @@ const STEPS: OrderStatus[] = [
   "delivered",
 ];
 
-/** Горизонтальный трекер статуса заказа: Новая → … → Доставлен. */
-export function StatusTracker({ status }: { status: OrderStatus }) {
+// В зале курьера нет: готовый заказ сразу подают к столу
+const DINE_IN_STEPS: OrderStatus[] = ["new", "cooking", "ready", "delivered"];
+
+/** Горизонтальный трекер статуса заказа: Новая → … → Доставлен / Подан. */
+export function StatusTracker({
+  status,
+  type = "delivery",
+}: {
+  status: OrderStatus;
+  type?: OrderType;
+}) {
+  const STEPS = type === "dine_in" ? DINE_IN_STEPS : DELIVERY_STEPS;
+
   if (status === "cancelled") {
     return (
       <div className="flex justify-center">
@@ -65,7 +76,7 @@ export function StatusTracker({ status }: { status: OrderStatus }) {
                   )}
                   aria-current={active ? "step" : undefined}
                 >
-                  {ORDER_STATUS_LABELS[step]}
+                  {orderStatusLabel(step, type)}
                 </span>
               </div>
             </li>

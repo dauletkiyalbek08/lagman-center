@@ -1,12 +1,15 @@
 import { cn } from "@/lib/cn";
-import { ORDER_STATUS_COLORS, ORDER_STATUS_LABELS } from "@/lib/constants";
-import type { OrderStatus } from "@/lib/types";
+import { ORDER_STATUS_COLORS, orderStatusLabel } from "@/lib/constants";
+import type { OrderStatus, OrderType } from "@/lib/types";
 
 export function StatusBadge({
   status,
+  type = "delivery",
   className,
 }: {
   status: OrderStatus;
+  /** В зале заказ «подают», а не «доставляют» — подпись отличается */
+  type?: OrderType;
   className?: string;
 }) {
   return (
@@ -17,7 +20,7 @@ export function StatusBadge({
         className,
       )}
     >
-      {ORDER_STATUS_LABELS[status]}
+      {orderStatusLabel(status, type)}
     </span>
   );
 }

@@ -11,19 +11,30 @@ import { SEED_MENU_ITEMS } from "./seed-data";
 import { getSupabaseBrowser } from "./supabase/client";
 import { isSupabaseConfigured } from "./supabase/config";
 import type {
+  GuestTable,
   MenuItem,
   NewOrderInput,
   NewReservationInput,
   NewStaffInput,
+  NewTableInput,
   Order,
   OrderStatus,
+  PaymentStatus,
   Reservation,
   ReservationStatus,
   Role,
+  Settings,
   StaffMember,
+  Table,
 } from "./types";
 
 export { isSupabaseConfigured };
+
+export const DEFAULT_SETTINGS: Settings = {
+  delivery_fee: 500,
+  free_delivery_from: 0,
+  min_order: 0,
+};
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 function mapOrder(row: any): Order {
@@ -32,11 +43,16 @@ function mapOrder(row: any): Order {
     order_number: row.order_number,
     customer_id: row.customer_id ?? null,
     status: row.status,
+    order_type: row.order_type ?? "delivery",
+    table_id: row.table_id ?? null,
+    table_number: row.table_number ?? null,
     total: row.total,
-    address: row.address,
-    phone: row.phone,
+    delivery_fee: row.delivery_fee ?? 0,
+    address: row.address ?? null,
+    phone: row.phone ?? null,
     customer_name: row.customer_name,
     payment_method: row.payment_method,
+    payment_status: row.payment_status ?? "unpaid",
     comment: row.comment ?? null,
     courier_id: row.courier_id ?? null,
     created_at: row.created_at,
@@ -155,15 +171,18 @@ export function subscribeMenu(cb: () => void): () => void {
  * Заказ создаётся RPC-функцией create_order (SECURITY DEFINER):
  * гость не имеет права читать заказы, поэтому обычный
  * `insert ... returning` не прошёл бы RLS. Заодно сервер сам считает
- * сумму по ценам из БД и пишет заказ вместе с позициями атомарно.
+ * сумму (цены + доставка) по данным из БД и пишет заказ вместе
+ * с позициями атомарно.
  */
 export async function createOrder(input: NewOrderInput): Promise<Order> {
   const supabase = getSupabaseBrowser();
   if (!supabase) return demo.demoCreateOrder(input);
 
   const { data, error } = await supabase.rpc("create_order", {
-    p_address: input.address,
-    p_phone: input.phone,
+    p_order_type: input.order_type,
+    p_table_code: input.table_code ?? null,
+    p_address: input.address ?? null,
+    p_phone: input.phone ?? null,
     p_customer_name: input.customer_name,
     p_payment_method: input.payment_method,
     p_comment: input.comment ?? null,
@@ -260,6 +279,23 @@ export async function updateOrderStatus(
   if (error) throw new Error(error.message);
 }
 
+/** Отметка об оплате: в зале её ставит касса, при доставке — курьер/админ. */
+export async function updateOrderPayment(
+  id: string,
+  payment_status: PaymentStatus,
+): Promise<void> {
+  const supabase = getSupabaseBrowser();
+  if (!supabase) {
+    demo.demoUpdateOrderPayment(id, payment_status);
+    return;
+  }
+  const { error } = await supabase
+    .from("orders")
+    .update({ payment_status })
+    .eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
 /**
  * Курьер забирает готовый заказ: ready -> delivering + courier_id.
  * Условие `.eq("status", "ready")` делает операцию гонко-безопасной —
@@ -291,6 +327,126 @@ export function subscribeOrders(cb: () => void): () => void {
   return () => {
     supabase.removeChannel(channel);
   };
+}
+
+// ---------- Столы ----------
+
+/**
+ * Гость, отсканировавший QR, узнаёт свой стол по коду через RPC.
+ * Прямого чтения таблицы столов у него нет: в строке лежит код,
+ * а раздавать коды всех столов подряд ни к чему.
+ */
+export async function fetchTableByCode(
+  code: string,
+): Promise<GuestTable | null> {
+  const supabase = getSupabaseBrowser();
+  if (!supabase) return demo.demoFetchTableByCode(code);
+  const { data, error } = await supabase.rpc("table_by_code", {
+    p_code: code,
+  });
+  if (error || !data || data.length === 0) return null;
+  return data[0] as GuestTable;
+}
+
+export async function fetchTables(): Promise<Table[]> {
+  const supabase = getSupabaseBrowser();
+  if (!supabase) return demo.demoFetchTables();
+  const { data, error } = await supabase
+    .from("tables")
+    .select("*")
+    .order("number", { ascending: true });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as Table[];
+}
+
+export async function createTable(input: NewTableInput): Promise<void> {
+  const supabase = getSupabaseBrowser();
+  if (!supabase) {
+    demo.demoCreateTable(input);
+    return;
+  }
+  const { error } = await supabase.from("tables").insert({
+    number: input.number,
+    seats: input.seats,
+    zone: input.zone || null,
+  });
+  if (error) {
+    throw new Error(
+      error.code === "23505"
+        ? `Стол №${input.number} уже есть`
+        : error.message,
+    );
+  }
+}
+
+export async function updateTable(
+  id: string,
+  fields: Partial<Pick<Table, "number" | "seats" | "zone" | "is_active" | "is_occupied">>,
+): Promise<void> {
+  const supabase = getSupabaseBrowser();
+  if (!supabase) {
+    demo.demoUpdateTable(id, fields);
+    return;
+  }
+  const { error } = await supabase.from("tables").update(fields).eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
+export async function deleteTable(id: string): Promise<void> {
+  const supabase = getSupabaseBrowser();
+  if (!supabase) {
+    demo.demoDeleteTable(id);
+    return;
+  }
+  const { error } = await supabase.from("tables").delete().eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
+export function subscribeTables(cb: () => void): () => void {
+  const supabase = getSupabaseBrowser();
+  if (!supabase) return demo.demoSubscribe("tables", cb);
+  const channel = supabase
+    .channel("tables-changes")
+    .on("postgres_changes", { event: "*", schema: "public", table: "tables" }, cb)
+    .subscribe();
+  return () => {
+    supabase.removeChannel(channel);
+  };
+}
+
+// ---------- Настройки доставки ----------
+
+export async function fetchSettings(): Promise<Settings> {
+  const supabase = getSupabaseBrowser();
+  if (!supabase) return demo.demoFetchSettings();
+  const { data, error } = await supabase
+    .from("settings")
+    .select("delivery_fee, free_delivery_from, min_order")
+    .eq("id", 1)
+    .maybeSingle();
+  if (error || !data) return DEFAULT_SETTINGS;
+  return data as Settings;
+}
+
+export async function saveSettings(settings: Settings): Promise<void> {
+  const supabase = getSupabaseBrowser();
+  if (!supabase) {
+    demo.demoSaveSettings(settings);
+    return;
+  }
+  const { error } = await supabase
+    .from("settings")
+    .update(settings)
+    .eq("id", 1);
+  if (error) throw new Error(error.message);
+}
+
+/** Стоимость доставки для показанной корзины (то же правило, что в БД). */
+export function deliveryFeeFor(subtotal: number, settings: Settings): number {
+  if (settings.free_delivery_from > 0 && subtotal >= settings.free_delivery_from) {
+    return 0;
+  }
+  return settings.delivery_fee;
 }
 
 // ---------- Брони ----------
@@ -338,6 +494,23 @@ export async function updateReservationStatus(
   const { error } = await supabase
     .from("reservations")
     .update({ status })
+    .eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
+/** Админ сажает бронь за конкретный стол (или снимает привязку). */
+export async function updateReservationTable(
+  id: string,
+  table_id: string | null,
+): Promise<void> {
+  const supabase = getSupabaseBrowser();
+  if (!supabase) {
+    demo.demoUpdateReservationTable(id, table_id);
+    return;
+  }
+  const { error } = await supabase
+    .from("reservations")
+    .update({ table_id })
     .eq("id", id);
   if (error) throw new Error(error.message);
 }

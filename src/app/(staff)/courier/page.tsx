@@ -50,11 +50,12 @@ function CourierPanel() {
     return unsubscribe;
   }, [load]);
 
-  // Старые сверху — их развозим первыми
+  // Только доставка (заказы в зале курьера не касаются) и старые сверху —
+  // их развозим первыми
   const byStatus = useCallback(
     (status: OrderStatus) =>
       orders
-        .filter((o) => o.status === status)
+        .filter((o) => o.order_type === "delivery" && o.status === status)
         .sort(
           (a, b) =>
             new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
@@ -196,14 +197,14 @@ function CourierPanel() {
                   >
                     <div className="grid grid-cols-2 gap-2">
                       <a
-                        href={telHref(order.phone)}
+                        href={telHref(order.phone ?? "")}
                         className={buttonClasses("secondary", "md", "w-full")}
                       >
                         <Phone className="size-4" aria-hidden />
                         Позвонить
                       </a>
                       <a
-                        href={mapsHref(order.address)}
+                        href={mapsHref(order.address ?? "")}
                         target="_blank"
                         rel="noopener noreferrer"
                         className={buttonClasses("secondary", "md", "w-full")}

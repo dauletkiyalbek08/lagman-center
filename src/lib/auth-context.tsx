@@ -9,9 +9,18 @@ import {
   useMemo,
   useState,
 } from "react";
+import { formatPhone, loginToEmail, phoneToEmail } from "./phone";
 import { getSupabaseBrowser } from "./supabase/client";
 import { isSupabaseConfigured } from "./supabase/config";
 import type { Profile } from "./types";
+
+export interface SignUpInput {
+  /** Номер в нормализованном виде: 77071234567 */
+  phone: string;
+  password: string;
+  name: string;
+  address: string;
+}
 
 interface AuthContextValue {
   /** true, пока Supabase не подключён — панели открыты в демо-режиме */
@@ -19,13 +28,9 @@ interface AuthContextValue {
   loading: boolean;
   user: User | null;
   profile: Profile | null;
-  signIn: (email: string, password: string) => Promise<void>;
-  signUp: (
-    email: string,
-    password: string,
-    name: string,
-    phone: string,
-  ) => Promise<void>;
+  /** login — номер телефона клиента или email сотрудника */
+  signIn: (login: string, password: string) => Promise<void>;
+  signUp: (input: SignUpInput) => Promise<void>;
   signOut: () => Promise<void>;
 }
 
@@ -55,7 +60,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
       const { data } = await supabase
         .from("profiles")
-        .select("id, role, name, phone")
+        .select("id, role, name, phone, address")
         .eq("id", u.id)
         .maybeSingle();
       if (mySeq !== seq) return;
@@ -79,26 +84,43 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // показать сотруднику «Нет доступа» до того, как подтянется профиль.
   const loading = authLoading || Boolean(user && resolvedFor !== user.id);
 
-  const signIn = useCallback(async (email: string, password: string) => {
+  const signIn = useCallback(async (login: string, password: string) => {
     const supabase = getSupabaseBrowser();
     if (!supabase) throw new Error("Supabase не подключён (демо-режим)");
+    const email = loginToEmail(login);
+    if (!email) throw new Error("Проверьте номер телефона");
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) throw new Error(translateAuthError(error.message));
   }, []);
 
-  const signUp = useCallback(
-    async (email: string, password: string, name: string, phone: string) => {
-      const supabase = getSupabaseBrowser();
-      if (!supabase) throw new Error("Supabase не подключён (демо-режим)");
-      const { error } = await supabase.auth.signUp({
-        email,
-        password,
-        options: { data: { name, phone } },
-      });
-      if (error) throw new Error(translateAuthError(error.message));
-    },
-    [],
-  );
+  /**
+   * Регистрация клиента идёт через RPC, а не supabase.auth.signUp():
+   * GoTrue считает логин почтой и пытается отправить письмо подтверждения
+   * на несуществующий адрес 7707…@phone.lagmancenter.kz. Письмо не доходит,
+   * сессию он не выдаёт, а почтовый лимит проекта выгорает впустую.
+   * Функция register_customer заводит учётку прямо в базе (почта сразу
+   * подтверждена), а сессию мы получаем обычным входом по паролю.
+   */
+  const signUp = useCallback(async (input: SignUpInput) => {
+    const supabase = getSupabaseBrowser();
+    if (!supabase) throw new Error("Supabase не подключён (демо-режим)");
+
+    // Номер отдаём в человеческом виде: функция сама вытащит из него цифры
+    // для логина, а в профиль запишет как есть — курьеру звонить по нему
+    const { error } = await supabase.rpc("register_customer", {
+      p_phone: formatPhone(input.phone),
+      p_password: input.password,
+      p_name: input.name,
+      p_address: input.address,
+    });
+    if (error) throw new Error(translateAuthError(error.message));
+
+    const { error: signInError } = await supabase.auth.signInWithPassword({
+      email: phoneToEmail(input.phone),
+      password: input.password,
+    });
+    if (signInError) throw new Error(translateAuthError(signInError.message));
+  }, []);
 
   const signOut = useCallback(async () => {
     const supabase = getSupabaseBrowser();
@@ -130,11 +152,12 @@ export function useAuth(): AuthContextValue {
 
 function translateAuthError(message: string): string {
   const map: Array<[RegExp, string]> = [
-    [/invalid login credentials/i, "Неверный email или пароль"],
-    [/user already registered/i, "Пользователь с таким email уже зарегистрирован"],
+    [/invalid login credentials/i, "Неверный логин или пароль"],
+    [/user already registered/i, "Этот номер уже зарегистрирован — войдите"],
     [/password should be at least/i, "Пароль должен быть не короче 6 символов"],
     [/email not confirmed/i, "Подтвердите email по ссылке из письма"],
-    [/unable to validate email/i, "Некорректный email"],
+    [/unable to validate email/i, "Некорректный логин"],
+    [/email address .* is invalid/i, "Некорректный логин"],
   ];
   for (const [re, ru] of map) {
     if (re.test(message)) return ru;

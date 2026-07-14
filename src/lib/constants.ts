@@ -1,4 +1,11 @@
-import type { Establishment, OrderStatus, PaymentMethod, ReservationStatus } from "./types";
+import type {
+  DeliveryPaymentMethod,
+  Establishment,
+  OrderStatus,
+  OrderType,
+  PaymentMethod,
+  ReservationStatus,
+} from "./types";
 
 export const SITE_NAME = "Lagman Center";
 
@@ -50,6 +57,20 @@ export const ORDER_STATUS_LABELS: Record<OrderStatus, string> = {
   cancelled: "Отменён",
 };
 
+export const ORDER_TYPE_LABELS: Record<OrderType, string> = {
+  delivery: "Доставка",
+  dine_in: "В зале",
+};
+
+/** Заказ в зале не «доставляют», а подают — подпись статуса зависит от типа. */
+export function orderStatusLabel(status: OrderStatus, type: OrderType): string {
+  if (type === "dine_in") {
+    if (status === "ready") return "Готов к подаче";
+    if (status === "delivered") return "Подан";
+  }
+  return ORDER_STATUS_LABELS[status];
+}
+
 export const ORDER_STATUS_COLORS: Record<OrderStatus, string> = {
   new: "bg-blue-500/15 text-blue-400 border-blue-500/30",
   cooking: "bg-amber-500/15 text-amber-400 border-amber-500/30",
@@ -63,7 +84,15 @@ export const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
   cash: "Наличными",
   card: "Картой курьеру",
   kaspi: "Kaspi",
+  counter: "На кассе",
 };
+
+/** Способы оплаты, которые клиент выбирает сам. В зале платят на кассе. */
+export const DELIVERY_PAYMENT_METHODS: DeliveryPaymentMethod[] = [
+  "cash",
+  "card",
+  "kaspi",
+];
 
 export const RESERVATION_STATUS_LABELS: Record<ReservationStatus, string> = {
   new: "Новая",

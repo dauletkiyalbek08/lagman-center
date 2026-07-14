@@ -10,16 +10,21 @@
 
 import { SEED_MENU_ITEMS } from "./seed-data";
 import type {
+  GuestTable,
   MenuItem,
   NewOrderInput,
   NewReservationInput,
   NewStaffInput,
+  NewTableInput,
   Order,
   OrderStatus,
+  PaymentStatus,
   Reservation,
   ReservationStatus,
   Role,
+  Settings,
   StaffMember,
+  Table,
 } from "./types";
 
 const KEYS = {
@@ -28,11 +33,13 @@ const KEYS = {
   menu: "lagman.demo.menu",
   counter: "lagman.demo.counter",
   staff: "lagman.demo.staff",
+  tables: "lagman.demo.tables",
+  settings: "lagman.demo.settings",
 } as const;
 
 const CHANNEL = "lagman-demo";
 
-type Topic = "orders" | "reservations" | "menu" | "staff";
+type Topic = "orders" | "reservations" | "menu" | "staff" | "tables" | "settings";
 
 function isBrowser() {
   return typeof window !== "undefined";
@@ -119,11 +126,16 @@ function seedOrders(): Order[] {
     order_number: `#${String(num).padStart(5, "0")}`,
     customer_id: null,
     status,
+    order_type: "delivery",
+    table_id: null,
+    table_number: null,
     total: items.reduce((s, [, price, qty]) => s + price * qty, 0),
+    delivery_fee: 0,
     address: "г. Щучинск",
     phone: "+7 700 000 0000",
     customer_name: "Гость",
     payment_method: "cash",
+    payment_status: "unpaid",
     comment: null,
     courier_id: null,
     created_at: new Date(now - minutesAgo * 60_000).toISOString(),
@@ -149,10 +161,12 @@ function seedOrders(): Order[] {
       ["Самса", 690, 4],
     ]),
     mk(41, "new", 6, {
+      order_type: "dine_in",
+      table_number: 3,
       customer_name: "Дамир",
-      phone: "+7 705 444 5566",
-      address: "мкр. Юбилейный 7, подъезд 2",
-      payment_method: "cash",
+      phone: null,
+      address: null,
+      payment_method: "counter",
     }, [
       ["Плов", 2190, 1],
       ["Шашлык из баранины", 2990, 2],
@@ -183,16 +197,32 @@ export function demoFetchOrder(id: string): Order | null {
 
 export function demoCreateOrder(input: NewOrderInput): Order {
   const orders = loadOrders();
+  const subtotal = input.items.reduce(
+    (s, ci) => s + ci.item.price * ci.quantity,
+    0,
+  );
+  const dineIn = input.order_type === "dine_in";
+  const table = dineIn
+    ? demoFetchTables().find((t) => t.code === input.table_code)
+    : undefined;
+  const settings = demoFetchSettings();
+  const fee = dineIn ? 0 : demoDeliveryFee(subtotal, settings);
+
   const order: Order = {
     id: uid(),
     order_number: nextOrderNumber(),
     customer_id: null,
     status: "new",
-    total: input.items.reduce((s, ci) => s + ci.item.price * ci.quantity, 0),
-    address: input.address,
-    phone: input.phone,
+    order_type: input.order_type,
+    table_id: table?.id ?? null,
+    table_number: table?.number ?? null,
+    total: subtotal + fee,
+    delivery_fee: fee,
+    address: input.address ?? null,
+    phone: input.phone ?? null,
     customer_name: input.customer_name,
-    payment_method: input.payment_method,
+    payment_method: dineIn ? "counter" : input.payment_method,
+    payment_status: "unpaid",
     comment: input.comment || null,
     courier_id: null,
     created_at: new Date().toISOString(),
@@ -206,6 +236,7 @@ export function demoCreateOrder(input: NewOrderInput): Order {
   };
   writeJson(KEYS.orders, [order, ...orders]);
   notify("orders");
+  if (table) demoUpdateTable(table.id, { is_occupied: true });
   return order;
 }
 
@@ -214,6 +245,21 @@ export function demoUpdateOrderStatus(id: string, status: OrderStatus): void {
     o.id === id ? { ...o, status, updated_at: new Date().toISOString() } : o,
   );
   writeJson(KEYS.orders, orders);
+  notify("orders");
+}
+
+export function demoUpdateOrderPayment(
+  id: string,
+  payment_status: PaymentStatus,
+): void {
+  writeJson(
+    KEYS.orders,
+    loadOrders().map((o) =>
+      o.id === id
+        ? { ...o, payment_status, updated_at: new Date().toISOString() }
+        : o,
+    ),
+  );
   notify("orders");
 }
 
@@ -239,6 +285,102 @@ export function demoClaimOrder(id: string): boolean {
   return true;
 }
 
+// ---------- Столы ----------
+
+/** 10 столов «из коробки» — столько же, сколько создаёт схема БД. */
+function seedTables(): Table[] {
+  return Array.from({ length: 10 }, (_, i) => ({
+    id: `table-${i + 1}`,
+    number: i + 1,
+    seats: i < 6 ? 4 : 6,
+    zone: null,
+    code: `demo${i + 1}`,
+    is_active: true,
+    is_occupied: false,
+    created_at: new Date().toISOString(),
+  }));
+}
+
+export function demoFetchTables(): Table[] {
+  const existing = readJson<Table[] | null>(KEYS.tables, null);
+  if (existing) return [...existing].sort((a, b) => a.number - b.number);
+  const seeded = seedTables();
+  writeJson(KEYS.tables, seeded);
+  return seeded;
+}
+
+export function demoFetchTableByCode(code: string): GuestTable | null {
+  const table = demoFetchTables().find(
+    (t) => t.code === code.trim().toLowerCase() && t.is_active,
+  );
+  if (!table) return null;
+  return {
+    id: table.id,
+    number: table.number,
+    seats: table.seats,
+    zone: table.zone,
+  };
+}
+
+export function demoCreateTable(input: NewTableInput): void {
+  const tables = demoFetchTables();
+  if (tables.some((t) => t.number === input.number)) {
+    throw new Error(`Стол №${input.number} уже есть`);
+  }
+  tables.push({
+    id: uid(),
+    number: input.number,
+    seats: input.seats,
+    zone: input.zone || null,
+    code: `demo${Math.random().toString(36).slice(2, 8)}`,
+    is_active: true,
+    is_occupied: false,
+    created_at: new Date().toISOString(),
+  });
+  writeJson(KEYS.tables, tables);
+  notify("tables");
+}
+
+export function demoUpdateTable(id: string, fields: Partial<Table>): void {
+  writeJson(
+    KEYS.tables,
+    demoFetchTables().map((t) => (t.id === id ? { ...t, ...fields } : t)),
+  );
+  notify("tables");
+}
+
+export function demoDeleteTable(id: string): void {
+  writeJson(
+    KEYS.tables,
+    demoFetchTables().filter((t) => t.id !== id),
+  );
+  notify("tables");
+}
+
+// ---------- Настройки ----------
+
+const DEMO_SETTINGS: Settings = {
+  delivery_fee: 500,
+  free_delivery_from: 0,
+  min_order: 0,
+};
+
+export function demoFetchSettings(): Settings {
+  return readJson<Settings>(KEYS.settings, DEMO_SETTINGS);
+}
+
+export function demoSaveSettings(settings: Settings): void {
+  writeJson(KEYS.settings, settings);
+  notify("settings");
+}
+
+function demoDeliveryFee(subtotal: number, settings: Settings): number {
+  if (settings.free_delivery_from > 0 && subtotal >= settings.free_delivery_from) {
+    return 0;
+  }
+  return settings.delivery_fee;
+}
+
 // ---------- Брони ----------
 
 export function demoFetchReservations(): Reservation[] {
@@ -251,6 +393,7 @@ export function demoCreateReservation(input: NewReservationInput): Reservation {
   const reservation: Reservation = {
     id: uid(),
     status: "new",
+    table_id: null,
     created_at: new Date().toISOString(),
     ...input,
   };
@@ -267,6 +410,17 @@ export function demoUpdateReservationStatus(
     r.id === id ? { ...r, status } : r,
   );
   writeJson(KEYS.reservations, next);
+  notify("reservations");
+}
+
+export function demoUpdateReservationTable(
+  id: string,
+  table_id: string | null,
+): void {
+  writeJson(
+    KEYS.reservations,
+    demoFetchReservations().map((r) => (r.id === id ? { ...r, table_id } : r)),
+  );
   notify("reservations");
 }
 

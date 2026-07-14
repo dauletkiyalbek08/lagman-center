@@ -2,11 +2,12 @@
 
 import { Logo } from "@/components/logo";
 import { buttonClasses } from "@/components/ui/button";
+import { useAuth } from "@/lib/auth-context";
 import { useCart } from "@/lib/cart-context";
 import { cn } from "@/lib/cn";
 import { CONTACTS, NAV_LINKS } from "@/lib/constants";
 import { useMounted } from "@/lib/use-mounted";
-import { Menu, Phone, ShoppingCart, User, X } from "lucide-react";
+import { LogOut, Menu, Phone, ShoppingCart, User, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
@@ -14,6 +15,7 @@ import { useState } from "react";
 export function SiteHeader() {
   const pathname = usePathname();
   const { count } = useCart();
+  const { user, signOut } = useAuth();
   const [open, setOpen] = useState(false);
   const mounted = useMounted();
 
@@ -72,14 +74,26 @@ export function SiteHeader() {
             )}
           </Link>
 
-          <Link
-            href="/login"
-            className="hidden rounded-btn p-2 text-muted transition-colors hover:bg-white/5 hover:text-white sm:block"
-            aria-label="Вход для персонала"
-            title="Вход для персонала"
-          >
-            <User className="size-5" aria-hidden />
-          </Link>
+          {mounted && user ? (
+            <button
+              type="button"
+              onClick={() => signOut()}
+              className="hidden cursor-pointer rounded-btn p-2 text-muted transition-colors hover:bg-white/5 hover:text-white sm:block"
+              aria-label="Выйти из аккаунта"
+              title="Выйти из аккаунта"
+            >
+              <LogOut className="size-5" aria-hidden />
+            </button>
+          ) : (
+            <Link
+              href="/login"
+              className="hidden rounded-btn p-2 text-muted transition-colors hover:bg-white/5 hover:text-white sm:block"
+              aria-label="Вход"
+              title="Вход для клиентов и персонала"
+            >
+              <User className="size-5" aria-hidden />
+            </Link>
+          )}
 
           <Link
             href="/menu"
@@ -130,9 +144,20 @@ export function SiteHeader() {
               <Link href="/menu" className={buttonClasses("primary", "md")}>
                 Заказать доставку
               </Link>
-              <Link href="/login" className={buttonClasses("secondary", "md")}>
-                Вход для персонала
-              </Link>
+              {mounted && user ? (
+                <button
+                  type="button"
+                  onClick={() => signOut()}
+                  className={buttonClasses("secondary", "md")}
+                >
+                  <LogOut className="size-4" aria-hidden />
+                  Выйти
+                </button>
+              ) : (
+                <Link href="/login" className={buttonClasses("secondary", "md")}>
+                  Вход
+                </Link>
+              )}
             </div>
           </nav>
         </div>

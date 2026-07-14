@@ -44,3 +44,12 @@ input[type="time"]::-webkit-calendar-picker-indicator {
   opacity: 0.6;
   cursor: pointer;
 }
+
+/* Печать QR-кодов столов: лист белый, карточки чёрно-белые */
+@media print {
+  html,
+  body {
+    background: #ffffff;
+    color: #000000;
+  }
+}

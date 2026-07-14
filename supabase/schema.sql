@@ -19,6 +19,8 @@ create table public.profiles (
     check (role in ('customer', 'admin', 'kitchen', 'courier')),
   name text,
   phone text,
+  -- адрес по умолчанию: подставляется в следующий заказ клиента
+  address text,
   created_at timestamptz not null default now()
 );
 
@@ -34,6 +36,33 @@ create table public.menu_items (
   created_at timestamptz not null default now()
 );
 
+-- Настройки доставки. Одна строка: id всегда = 1.
+create table public.settings (
+  id int primary key default 1 check (id = 1),
+  delivery_fee int not null default 500 check (delivery_fee >= 0),
+  -- 0 — бесплатной доставки нет
+  free_delivery_from int not null default 0 check (free_delivery_from >= 0),
+  -- 0 — минимальной суммы нет
+  min_order int not null default 0 check (min_order >= 0),
+  updated_at timestamptz not null default now()
+);
+
+insert into public.settings (id) values (1);
+
+-- Столы в зале. code — короткий код в QR-ссылке /t/<code>.
+create table public.tables (
+  id uuid primary key default gen_random_uuid(),
+  number int not null unique,
+  seats int not null default 4 check (seats > 0),
+  zone text,
+  code text not null unique
+    default lower(substr(replace(gen_random_uuid()::text, '-', ''), 1, 8)),
+  is_active boolean not null default true,
+  -- «за столом сидят гости»: ставит официант/админ или заказ по QR
+  is_occupied boolean not null default false,
+  created_at timestamptz not null default now()
+);
+
 -- Номер заявки вида #00042
 create sequence public.order_number_seq start 42;
 
@@ -44,12 +73,24 @@ create table public.orders (
   customer_id uuid references auth.users (id) on delete set null,
   status text not null default 'new'
     check (status in ('new', 'cooking', 'ready', 'delivering', 'delivered', 'cancelled')),
+  -- dine_in — заказ за столом по QR (без регистрации, оплата на кассе)
+  order_type text not null default 'delivery'
+    check (order_type in ('delivery', 'dine_in')),
+  table_id uuid references public.tables (id) on delete set null,
+  -- номер стола копией: кухня и курьер не имеют прав на public.tables,
+  -- а номер им нужен — так обходимся без join и без лишних политик
+  table_number int,
+  -- сумма с доставкой
   total int not null default 0 check (total >= 0),
-  address text not null,
-  phone text not null,
+  delivery_fee int not null default 0 check (delivery_fee >= 0),
+  -- у заказа в зале адреса нет
+  address text,
+  phone text,
   customer_name text not null default '',
   payment_method text not null default 'cash'
-    check (payment_method in ('cash', 'card', 'kaspi')),
+    check (payment_method in ('cash', 'card', 'kaspi', 'counter')),
+  payment_status text not null default 'unpaid'
+    check (payment_status in ('unpaid', 'paid')),
   comment text,
   courier_id uuid references auth.users (id) on delete set null,
   created_at timestamptz not null default now(),
@@ -77,6 +118,8 @@ create table public.reservations (
   time text not null,
   guests int not null check (guests > 0),
   establishment_id text references public.establishments (id),
+  -- админ сажает бронь за конкретный стол — это красит карту зала
+  table_id uuid references public.tables (id) on delete set null,
   status text not null default 'new'
     check (status in ('new', 'confirmed', 'cancelled')),
   created_at timestamptz not null default now()
@@ -91,11 +134,12 @@ language plpgsql
 security definer set search_path = public
 as $$
 begin
-  insert into public.profiles (id, name, phone)
+  insert into public.profiles (id, name, phone, address)
   values (
     new.id,
     new.raw_user_meta_data ->> 'name',
-    new.raw_user_meta_data ->> 'phone'
+    new.raw_user_meta_data ->> 'phone',
+    new.raw_user_meta_data ->> 'address'
   );
   return new;
 end;
@@ -121,6 +165,10 @@ create trigger orders_updated_at
   before update on public.orders
   for each row execute function public.set_updated_at();
 
+create trigger settings_updated_at
+  before update on public.settings
+  for each row execute function public.set_updated_at();
+
 -- ---------- Роли: хелпер ----------
 
 -- security definer, чтобы читать profiles в обход RLS внутри политик
@@ -143,7 +191,32 @@ $$;
 -- из devtools. Обе задачи решает одна функция.
 -- ============================================================
 
+-- Гость, отсканировавший QR, читает свой стол по коду.
+-- Через RPC, а не select: иначе пришлось бы открыть всю таблицу столов
+-- (вместе с кодами всех остальных столов) на публичное чтение.
+create or replace function public.table_by_code(p_code text)
+returns table (id uuid, number int, seats int, zone text)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select t.id, t.number, t.seats, t.zone
+  from public.tables t
+  where t.code = lower(btrim(p_code)) and t.is_active;
+$$;
+
+-- ============================================================
+-- create_order: два сценария.
+--   dine_in  — гость за столом (QR), без регистрации, оплата на кассе;
+--   delivery — только для вошедшего клиента: адрес обязателен,
+--              к сумме добавляется стоимость доставки из settings.
+-- Цены и стоимость доставки считаются здесь, из базы: подделать их
+-- из devtools нельзя.
+-- ============================================================
 create or replace function public.create_order(
+  p_order_type text,
+  p_table_code text,
   p_address text,
   p_phone text,
   p_customer_name text,
@@ -165,37 +238,67 @@ declare
   v_name text;
   v_price int;
   v_qty int;
-  v_total int := 0;
+  v_subtotal int := 0;
+  v_fee int := 0;
+  v_settings public.settings;
+  v_table public.tables;
+  v_payment text;
+  v_address text;
+  v_phone text;
 begin
-  if coalesce(btrim(p_address), '') = '' then
-    raise exception 'Укажите адрес доставки';
-  end if;
-  if coalesce(btrim(p_phone), '') = '' then
-    raise exception 'Укажите телефон';
-  end if;
-  if coalesce(p_payment_method, '') not in ('cash', 'card', 'kaspi') then
-    raise exception 'Неизвестный способ оплаты';
+  if coalesce(p_order_type, '') not in ('delivery', 'dine_in') then
+    raise exception 'Неизвестный тип заказа';
   end if;
   if coalesce(jsonb_array_length(p_items), 0) = 0 then
     raise exception 'Корзина пуста';
   end if;
 
+  select * into v_settings from public.settings where id = 1;
+
+  if p_order_type = 'dine_in' then
+    select * into v_table from public.tables
+    where code = lower(btrim(coalesce(p_table_code, ''))) and is_active;
+    if v_table.id is null then
+      raise exception 'Стол не найден. Отсканируйте QR-код на столе ещё раз.';
+    end if;
+    v_payment := 'counter';   -- в зале платят на кассе
+    v_address := null;
+    v_phone := nullif(btrim(coalesce(p_phone, '')), '');
+  else
+    -- Доставка — только для зарегистрированных: курьеру нужен настоящий
+    -- контакт, а гостя без аккаунта не с кем связать при отказе.
+    if auth.uid() is null then
+      raise exception 'Войдите или зарегистрируйтесь, чтобы заказать доставку';
+    end if;
+    if coalesce(btrim(p_address), '') = '' then
+      raise exception 'Укажите адрес доставки';
+    end if;
+    if coalesce(btrim(p_phone), '') = '' then
+      raise exception 'Укажите телефон';
+    end if;
+    if coalesce(p_payment_method, '') not in ('cash', 'card', 'kaspi') then
+      raise exception 'Неизвестный способ оплаты';
+    end if;
+    v_payment := p_payment_method;
+    v_address := btrim(p_address);
+    v_phone := btrim(p_phone);
+  end if;
+
   insert into public.orders (
-    customer_id, status, total, address, phone,
-    customer_name, payment_method, comment
+    customer_id, status, order_type, table_id, table_number,
+    total, delivery_fee, address, phone, customer_name,
+    payment_method, payment_status, comment
   )
   values (
-    auth.uid(), 'new', 0, btrim(p_address), btrim(p_phone),
-    coalesce(btrim(p_customer_name), ''), p_payment_method,
-    nullif(btrim(coalesce(p_comment, '')), '')
+    auth.uid(), 'new', p_order_type, v_table.id, v_table.number,
+    0, 0, v_address, v_phone, coalesce(btrim(p_customer_name), ''),
+    v_payment, 'unpaid', nullif(btrim(coalesce(p_comment, '')), '')
   )
   returning * into v_order;
 
   for v_item in select * from jsonb_array_elements(p_items) loop
     v_qty := greatest(coalesce((v_item ->> 'quantity')::int, 1), 1);
 
-    -- цену и название берём из БД; фолбэк на присланные значения нужен
-    -- только для демо-меню, которого нет в menu_items
     v_menu_id := null;
     v_menu := null;
     begin
@@ -208,6 +311,8 @@ begin
       select * into v_menu from public.menu_items where id = v_menu_id;
     end if;
 
+    -- цену и название берём из БД; фолбэк нужен только для демо-сида,
+    -- которого нет в menu_items
     if v_menu.id is not null then
       v_name := v_menu.name;
       v_price := v_menu.price;
@@ -222,12 +327,28 @@ begin
     )
     values (v_order.id, v_menu_id, v_name, v_price, v_qty);
 
-    v_total := v_total + v_price * v_qty;
+    v_subtotal := v_subtotal + v_price * v_qty;
   end loop;
 
-  update public.orders set total = v_total
-  where id = v_order.id
-  returning * into v_order;
+  if p_order_type = 'delivery' then
+    if coalesce(v_settings.min_order, 0) > 0 and v_subtotal < v_settings.min_order then
+      raise exception 'Минимальная сумма заказа на доставку — % ₸', v_settings.min_order;
+    end if;
+    v_fee := case
+      when coalesce(v_settings.free_delivery_from, 0) > 0
+       and v_subtotal >= v_settings.free_delivery_from then 0
+      else coalesce(v_settings.delivery_fee, 0)
+    end;
+  else
+    -- гости сели за стол — отмечаем его занятым на карте зала
+    update public.tables set is_occupied = true where id = v_table.id;
+  end if;
+
+  update public.orders
+     set total = v_subtotal + v_fee,
+         delivery_fee = v_fee
+   where id = v_order.id
+   returning * into v_order;
 
   return v_order;
 end;
@@ -288,9 +409,10 @@ begin
 end;
 $$;
 
-grant execute on function public.create_order(text, text, text, text, text, jsonb)
+grant execute on function public.create_order(text, text, text, text, text, text, text, jsonb)
   to anon, authenticated;
 grant execute on function public.order_status(uuid) to anon, authenticated;
+grant execute on function public.table_by_code(text) to anon, authenticated;
 grant execute on function public.create_reservation(text, text, date, text, int, text)
   to anon, authenticated;
 
@@ -298,6 +420,7 @@ grant execute on function public.create_reservation(text, text, date, text, int,
 -- PUBLIC, поэтому забираем именно у неё (revoke от anon/authenticated не помог бы).
 -- На триггер это не влияет: права проверяются при создании триггера, не при срабатывании.
 revoke execute on function public.handle_new_user() from public;
+
 
 -- ============================================================
 -- Управление сотрудниками из панели админа.
@@ -352,7 +475,69 @@ begin
 end;
 $$;
 
-revoke execute on function public.create_auth_user(text, text, text, text) from public;
+-- Наружу эта функция не нужна вовсе: её зовут только register_customer и
+-- admin_create_staff, а они security definer и выполняются от владельца.
+-- Supabase по умолчанию раздаёт EXECUTE на новые функции схемы public ролям
+-- anon и authenticated, поэтому забираем права и у них, а не только у PUBLIC:
+-- иначе кто угодно мог бы завести учётку с произвольным email.
+revoke execute on function public.create_auth_user(text, text, text, text)
+  from public, anon, authenticated;
+
+-- ============================================================
+-- Регистрация клиента по номеру телефона (нужна только для доставки).
+--
+-- Обычный supabase.auth.signUp() здесь не годится: GoTrue считает логин
+-- почтой и шлёт письмо подтверждения на несуществующий адрес вида
+-- 7707…@phone.lagmancenter.kz. Письмо не доходит, сессия не выдаётся, а
+-- почтовый лимит проекта выгорает на пустых отправках.
+--
+-- Поэтому учётку создаёт сама база: пароль хешируется bcrypt'ом, почта
+-- помечена подтверждённой, писем не шлётся. Сразу после этого клиент входит
+-- обычным signInWithPassword. Роль не параметр — всегда 'customer'
+-- (значение по умолчанию в profiles), а email собирается из номера, поэтому
+-- подсунуть произвольный адрес снаружи нельзя.
+-- ============================================================
+create or replace function public.register_customer(
+  p_phone text,
+  p_password text,
+  p_name text,
+  p_address text
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_digits text := regexp_replace(coalesce(p_phone, ''), '\D', '', 'g');
+  v_email text;
+  v_id uuid;
+begin
+  if v_digits !~ '^7\d{10}$' then
+    raise exception 'Проверьте номер телефона';
+  end if;
+  if length(coalesce(p_password, '')) < 6 then
+    raise exception 'Пароль должен быть не короче 6 символов';
+  end if;
+
+  v_email := v_digits || '@phone.lagmancenter.kz';
+
+  if exists (select 1 from auth.users where email = v_email) then
+    raise exception 'Этот номер уже зарегистрирован — войдите';
+  end if;
+
+  v_id := public.create_auth_user(v_email, p_password, p_name, p_phone);
+
+  update public.profiles
+     set name = nullif(btrim(coalesce(p_name, '')), ''),
+         phone = nullif(btrim(coalesce(p_phone, '')), ''),
+         address = nullif(btrim(coalesce(p_address, '')), '')
+   where id = v_id;
+end;
+$$;
+
+grant execute on function public.register_customer(text, text, text, text)
+  to anon, authenticated;
 
 create or replace function public.admin_create_staff(
   p_email text,
@@ -462,10 +647,13 @@ grant execute on function public.admin_delete_staff(uuid) to authenticated;
 grant execute on function public.admin_set_password(uuid, text) to authenticated;
 grant execute on function public.admin_list_staff() to authenticated;
 
-revoke execute on function public.admin_create_staff(text, text, text, text, text) from anon;
-revoke execute on function public.admin_delete_staff(uuid) from anon;
-revoke execute on function public.admin_set_password(uuid, text) from anon;
-revoke execute on function public.admin_list_staff() from anon;
+-- Внутри они и так проверяют my_role() = 'admin', но пусть анонимный клиент
+-- даже не сможет их дёрнуть (EXECUTE по умолчанию выдан ещё и роли PUBLIC).
+revoke execute on function public.admin_create_staff(text, text, text, text, text)
+  from public, anon;
+revoke execute on function public.admin_delete_staff(uuid) from public, anon;
+revoke execute on function public.admin_set_password(uuid, text) from public, anon;
+revoke execute on function public.admin_list_staff() from public, anon;
 
 -- ---------- Хранилище фотографий блюд ----------
 
@@ -501,6 +689,26 @@ alter table public.menu_items     enable row level security;
 alter table public.orders         enable row level security;
 alter table public.order_items    enable row level security;
 alter table public.reservations   enable row level security;
+alter table public.tables         enable row level security;
+alter table public.settings       enable row level security;
+
+-- Столы видит только персонал: в строке лежит code из QR, и светить его
+-- всем незачем. Гость получает свой стол через RPC table_by_code().
+create policy "tables: staff read"
+  on public.tables for select
+  using (public.my_role() in ('admin', 'kitchen', 'courier'));
+create policy "tables: admin write"
+  on public.tables for all
+  using (public.my_role() = 'admin')
+  with check (public.my_role() = 'admin');
+
+-- Настройки читают все: стоимость доставки видна в корзине ещё до входа
+create policy "settings: public read"
+  on public.settings for select using (true);
+create policy "settings: admin write"
+  on public.settings for all
+  using (public.my_role() = 'admin')
+  with check (public.my_role() = 'admin');
 
 -- Заведения: читают все, правит админ
 create policy "establishments: public read"
@@ -591,8 +799,15 @@ create policy "reservations: admin update"
 alter publication supabase_realtime add table public.orders;
 alter publication supabase_realtime add table public.reservations;
 alter publication supabase_realtime add table public.menu_items;
+alter publication supabase_realtime add table public.tables;
 
 -- ---------- Сид-данные ----------
+
+-- 10 столов: у каждого свой QR-код (/t/<code>). Номера и количество мест
+-- админ правит в панели, раздел «Столы».
+insert into public.tables (number, seats)
+select g, case when g <= 6 then 4 else 6 end
+from generate_series(1, 10) as g;
 
 insert into public.establishments (id, name, address, hours, tag) values
   ('shashlychny-dvor', 'Шашлычный двор', 'Летняя терраса в парке, Щучинск', '10:00 – 23:00', 'Летняя терраса'),

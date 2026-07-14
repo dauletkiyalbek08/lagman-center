@@ -2,14 +2,19 @@
 
 import { Button } from "@/components/ui/button";
 import { Card, CardBody } from "@/components/ui/card";
+import { Select } from "@/components/ui/field";
 import { PageLoader } from "@/components/ui/spinner";
 import { cn } from "@/lib/cn";
 import { ESTABLISHMENTS, RESERVATION_STATUS_LABELS } from "@/lib/constants";
-import { updateReservationStatus } from "@/lib/data";
+import {
+  fetchTables,
+  updateReservationStatus,
+  updateReservationTable,
+} from "@/lib/data";
 import { formatDate } from "@/lib/format";
-import type { Reservation, ReservationStatus } from "@/lib/types";
+import type { Reservation, ReservationStatus, Table } from "@/lib/types";
 import { CalendarClock, Clock, MapPin, Phone, Users } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 const RESERVATION_STATUS_COLORS: Record<ReservationStatus, string> = {
   new: "bg-blue-500/15 text-blue-400 border-blue-500/30",
@@ -35,6 +40,13 @@ export function ReservationsTab({
   refetch,
 }: ReservationsTabProps) {
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [tables, setTables] = useState<Table[]>([]);
+
+  useEffect(() => {
+    fetchTables()
+      .then(setTables)
+      .catch(() => {});
+  }, []);
 
   if (!reservations) return <PageLoader label="Загружаем брони…" />;
 
@@ -45,6 +57,19 @@ export function ReservationsTab({
       refetch();
     } catch (e) {
       alert(e instanceof Error ? e.message : "Не удалось обновить бронь");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  // Стол у брони — то, что красит карту зала в разделе «Столы»
+  const setTable = async (id: string, tableId: string) => {
+    setBusyId(id);
+    try {
+      await updateReservationTable(id, tableId || null);
+      refetch();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Не удалось назначить стол");
     } finally {
       setBusyId(null);
     }
@@ -116,6 +141,22 @@ export function ReservationsTab({
                   {establishment?.name ?? "Заведение не указано"}
                 </p>
               </div>
+
+              {r.status !== "cancelled" && tables.length > 0 && (
+                <Select
+                  value={r.table_id ?? ""}
+                  aria-label={`Стол для брони: ${r.name}`}
+                  disabled={busyId === r.id}
+                  onChange={(e) => setTable(r.id, e.target.value)}
+                >
+                  <option value="">Стол не назначен</option>
+                  {tables.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      Стол №{t.number} · {t.seats} мест
+                    </option>
+                  ))}
+                </Select>
+              )}
 
               {r.status === "new" && (
                 <div className="flex flex-wrap gap-2 pt-1">

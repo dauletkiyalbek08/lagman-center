@@ -34,7 +34,7 @@ function LoginForm() {
       ? nextParam
       : null;
 
-  const [email, setEmail] = useState("");
+  const [login, setLogin] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -63,7 +63,7 @@ function LoginForm() {
     setError(null);
     setSubmitting(true);
     try {
-      await signIn(email.trim(), password);
+      await signIn(login.trim(), password);
       // Дальше уводит useEffect: сначала дождёмся роли из профиля.
       // submitting не сбрасываем — спиннер живёт до перехода.
     } catch (err) {
@@ -76,23 +76,23 @@ function LoginForm() {
     <Card>
       <CardBody className="p-6 sm:p-8">
         <h1 className="font-heading text-2xl font-extrabold uppercase tracking-tight">
-          Вход для <span className="text-primary">персонала</span>
+          Вход
         </h1>
         <p className="mt-2 mb-6 text-sm text-muted">
-          Панели администратора, кухни и курьера. Логин и пароль выдаёт
-          администратор.
+          Клиенты входят по номеру телефона, сотрудники — по email (логин выдаёт
+          администратор).
         </p>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <Label htmlFor="login-email">Email</Label>
+            <Label htmlFor="login-id">Телефон или email</Label>
             <Input
-              id="login-email"
-              type="email"
-              autoComplete="email"
-              placeholder="you@example.com"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              id="login-id"
+              type="text"
+              autoComplete="username"
+              placeholder="+7 707 123 45 67"
+              value={login}
+              onChange={(e) => setLogin(e.target.value)}
               required
             />
           </div>
@@ -142,7 +142,16 @@ function LoginForm() {
           </Button>
         </form>
 
-        <p className="mt-6 text-center text-xs text-muted">
+        <p className="mt-6 text-center text-sm text-muted">
+          Нет аккаунта?{" "}
+          <Link
+            href={next ? `/register?next=${encodeURIComponent(next)}` : "/register"}
+            className="font-semibold text-white underline-offset-4 transition-colors hover:text-primary hover:underline"
+          >
+            Зарегистрироваться
+          </Link>
+        </p>
+        <p className="mt-3 text-center text-xs text-muted">
           <Link
             href="/"
             className="underline-offset-4 transition-colors hover:text-white hover:underline"

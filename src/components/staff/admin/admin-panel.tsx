@@ -12,6 +12,8 @@ import type { Order, Reservation } from "@/lib/types";
 import {
   CalendarClock,
   ClipboardList,
+  LayoutGrid,
+  Settings,
   Users,
   UtensilsCrossed,
 } from "lucide-react";
@@ -19,9 +21,17 @@ import { useCallback, useEffect, useState } from "react";
 import { MenuTab } from "./menu-tab";
 import { OrdersTab } from "./orders-tab";
 import { ReservationsTab } from "./reservations-tab";
+import { SettingsTab } from "./settings-tab";
 import { StaffTab } from "./staff-tab";
+import { TablesTab } from "./tables-tab";
 
-type TabId = "orders" | "menu" | "reservations" | "staff";
+type TabId =
+  | "orders"
+  | "tables"
+  | "menu"
+  | "reservations"
+  | "staff"
+  | "settings";
 
 export function AdminPanel() {
   const [tab, setTab] = useState<TabId>("orders");
@@ -64,6 +74,7 @@ export function AdminPanel() {
     badge: number;
   }> = [
     { id: "orders", label: "Заказы", icon: ClipboardList, badge: newOrdersCount },
+    { id: "tables", label: "Столы", icon: LayoutGrid, badge: 0 },
     { id: "menu", label: "Меню", icon: UtensilsCrossed, badge: 0 },
     {
       id: "reservations",
@@ -72,6 +83,7 @@ export function AdminPanel() {
       badge: newReservationsCount,
     },
     { id: "staff", label: "Персонал", icon: Users, badge: 0 },
+    { id: "settings", label: "Настройки", icon: Settings, badge: 0 },
   ];
 
   return (
@@ -112,6 +124,9 @@ export function AdminPanel() {
       </div>
 
       {tab === "orders" && <OrdersTab orders={orders} refetch={loadOrders} />}
+      {tab === "tables" && (
+        <TablesTab orders={orders} reservations={reservations} />
+      )}
       {tab === "menu" && <MenuTab />}
       {tab === "reservations" && (
         <ReservationsTab
@@ -120,6 +135,7 @@ export function AdminPanel() {
         />
       )}
       {tab === "staff" && <StaffTab />}
+      {tab === "settings" && <SettingsTab />}
     </div>
   );
 }

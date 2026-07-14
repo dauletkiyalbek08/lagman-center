@@ -6,7 +6,7 @@ import { Card, CardBody } from "@/components/ui/card";
 import { PageLoader } from "@/components/ui/spinner";
 import { cn } from "@/lib/cn";
 import { PAYMENT_METHOD_LABELS } from "@/lib/constants";
-import { updateOrderStatus } from "@/lib/data";
+import { updateOrderPayment, updateOrderStatus } from "@/lib/data";
 import { formatPrice, formatTime } from "@/lib/format";
 import type { Order, OrderStatus } from "@/lib/types";
 import {
@@ -19,6 +19,8 @@ import {
   MessageSquare,
   Phone,
   User,
+  UtensilsCrossed,
+  Wallet,
 } from "lucide-react";
 import { useState } from "react";
 
@@ -28,6 +30,23 @@ const KANBAN_COLUMNS: Array<{ status: OrderStatus; title: string }> = [
   { status: "ready", title: "Готовы" },
   { status: "delivering", title: "В пути" },
 ];
+
+/** Заказ в зале: «Стол №5». Доставка: «Доставка». */
+function OrderTypeBadge({ order }: { order: Order }) {
+  if (order.order_type === "dine_in") {
+    return (
+      <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-primary/40 bg-primary/15 px-2 py-0.5 text-xs font-semibold text-primary">
+        <UtensilsCrossed className="size-3" aria-hidden />
+        Стол №{order.table_number}
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-line bg-surface-2 px-2 py-0.5 text-xs font-semibold text-muted">
+      Доставка
+    </span>
+  );
+}
 
 interface OrdersTabProps {
   orders: Order[] | null;
@@ -55,9 +74,23 @@ export function OrdersTab({ orders, refetch }: OrdersTabProps) {
 
   const accept = (o: Order) => setStatus(o.id, "cooking");
   const markReady = (o: Order) => setStatus(o.id, "ready");
+  // В зале курьера нет: готовый заказ официант относит к столу
+  const markServed = (o: Order) => setStatus(o.id, "delivered");
   const cancel = (o: Order) => {
     if (window.confirm(`Отменить заказ ${o.order_number}?`)) {
       setStatus(o.id, "cancelled");
+    }
+  };
+
+  const markPaid = async (o: Order) => {
+    setBusyId(o.id);
+    try {
+      await updateOrderPayment(o.id, "paid");
+      refetch();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Не удалось отметить оплату");
+    } finally {
+      setBusyId(null);
     }
   };
 
@@ -87,8 +120,11 @@ export function OrdersTab({ orders, refetch }: OrdersTabProps) {
               <Card key={o.id} className="border-primary/50">
                 <CardBody className="space-y-3">
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="font-heading text-lg font-extrabold">
-                      {o.order_number}
+                    <span className="flex items-center gap-2">
+                      <span className="font-heading text-lg font-extrabold">
+                        {o.order_number}
+                      </span>
+                      <OrderTypeBadge order={o} />
                     </span>
                     <span className="text-sm text-muted">
                       {formatTime(o.created_at)}
@@ -156,14 +192,18 @@ export function OrdersTab({ orders, refetch }: OrdersTabProps) {
                           className="block w-full cursor-pointer p-3 text-left transition-colors hover:bg-white/[0.03]"
                         >
                           <div className="mb-1.5 flex items-center justify-between gap-2">
-                            <span className="font-heading text-sm font-extrabold">
-                              {o.order_number}
+                            <span className="flex min-w-0 items-center gap-1.5">
+                              <span className="font-heading text-sm font-extrabold">
+                                {o.order_number}
+                              </span>
+                              <OrderTypeBadge order={o} />
                             </span>
-                            <StatusBadge status={o.status} />
+                            <StatusBadge status={o.status} type={o.order_type} />
                           </div>
                           <div className="flex items-center justify-between gap-2 text-xs text-muted">
                             <span className="truncate">
-                              {formatTime(o.created_at)} · {o.customer_name}
+                              {formatTime(o.created_at)} ·{" "}
+                              {o.customer_name || "Гость"}
                             </span>
                             <span className="flex items-center gap-1 whitespace-nowrap font-semibold text-white">
                               {formatPrice(o.total)}
@@ -207,6 +247,28 @@ export function OrdersTab({ orders, refetch }: OrdersTabProps) {
                                 onClick={() => markReady(o)}
                               >
                                 Готов
+                              </Button>
+                            )}
+                            {o.status === "ready" &&
+                              o.order_type === "dine_in" && (
+                                <Button
+                                  variant="success"
+                                  size="sm"
+                                  disabled={busyId === o.id}
+                                  onClick={() => markServed(o)}
+                                >
+                                  Подан к столу
+                                </Button>
+                              )}
+                            {o.payment_status === "unpaid" && (
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                disabled={busyId === o.id}
+                                onClick={() => markPaid(o)}
+                              >
+                                <Wallet className="size-3.5" aria-hidden />
+                                Оплачен
                               </Button>
                             )}
                           </div>
@@ -263,10 +325,12 @@ export function OrdersTab({ orders, refetch }: OrdersTabProps) {
                     </span>
                     <span className="text-muted">{formatTime(o.created_at)}</span>
                     <span className="min-w-0 flex-1 truncate">
-                      {o.customer_name}
+                      {o.order_type === "dine_in"
+                        ? `Стол №${o.table_number}`
+                        : o.customer_name || "Гость"}
                     </span>
                     <span className="font-semibold">{formatPrice(o.total)}</span>
-                    <StatusBadge status={o.status} />
+                    <StatusBadge status={o.status} type={o.order_type} />
                   </li>
                 ))}
               </ul>
@@ -286,26 +350,40 @@ function OrderDetails({
   order: Order;
   compact?: boolean;
 }) {
+  const dineIn = order.order_type === "dine_in";
+
   return (
     <div className={cn("space-y-3", compact ? "text-xs" : "text-sm")}>
       <div className="space-y-1.5">
         <p className="flex items-center gap-2">
           <User className="size-4 shrink-0 text-muted" aria-hidden />
-          {order.customer_name}
+          {order.customer_name || "Гость"}
         </p>
-        <p className="flex items-center gap-2">
-          <Phone className="size-4 shrink-0 text-muted" aria-hidden />
-          <a
-            href={`tel:${order.phone.replace(/[^\d+]/g, "")}`}
-            className="text-white underline decoration-white/30 underline-offset-2 transition-colors hover:decoration-primary"
-          >
-            {order.phone}
-          </a>
-        </p>
-        <p className="flex items-start gap-2">
-          <MapPin className="mt-0.5 size-4 shrink-0 text-muted" aria-hidden />
-          {order.address}
-        </p>
+        {order.phone && (
+          <p className="flex items-center gap-2">
+            <Phone className="size-4 shrink-0 text-muted" aria-hidden />
+            <a
+              href={`tel:${order.phone.replace(/[^\d+]/g, "")}`}
+              className="text-white underline decoration-white/30 underline-offset-2 transition-colors hover:decoration-primary"
+            >
+              {order.phone}
+            </a>
+          </p>
+        )}
+        {dineIn ? (
+          <p className="flex items-start gap-2">
+            <UtensilsCrossed
+              className="mt-0.5 size-4 shrink-0 text-muted"
+              aria-hidden
+            />
+            Стол №{order.table_number} · заказ в зале
+          </p>
+        ) : (
+          <p className="flex items-start gap-2">
+            <MapPin className="mt-0.5 size-4 shrink-0 text-muted" aria-hidden />
+            {order.address}
+          </p>
+        )}
       </div>
 
       <ul className="space-y-1 rounded-btn bg-surface-2 px-3 py-2.5">
@@ -325,9 +403,19 @@ function OrderDetails({
       </ul>
 
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="flex items-center gap-1.5 text-muted">
+        <span className="flex flex-wrap items-center gap-1.5 text-muted">
           <CreditCard className="size-4" aria-hidden />
           {PAYMENT_METHOD_LABELS[order.payment_method]}
+          <span
+            className={cn(
+              "rounded-full border px-2 py-0.5 text-xs font-semibold",
+              order.payment_status === "paid"
+                ? "border-emerald-500/30 bg-emerald-500/15 text-emerald-400"
+                : "border-line bg-surface-2 text-muted",
+            )}
+          >
+            {order.payment_status === "paid" ? "оплачен" : "не оплачен"}
+          </span>
         </span>
         <span
           className={cn(
@@ -336,6 +424,11 @@ function OrderDetails({
           )}
         >
           {formatPrice(order.total)}
+          {order.delivery_fee > 0 && (
+            <span className="ml-1 font-sans text-xs font-normal text-muted">
+              (с доставкой {formatPrice(order.delivery_fee)})
+            </span>
+          )}
         </span>
       </div>
 
