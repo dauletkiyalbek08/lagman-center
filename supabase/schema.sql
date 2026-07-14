@@ -109,6 +109,7 @@ create trigger on_auth_user_created
 create or replace function public.set_updated_at()
 returns trigger
 language plpgsql
+set search_path = public
 as $$
 begin
   new.updated_at := now();
@@ -292,6 +293,11 @@ grant execute on function public.create_order(text, text, text, text, text, json
 grant execute on function public.order_status(uuid) to anon, authenticated;
 grant execute on function public.create_reservation(text, text, date, text, int, text)
   to anon, authenticated;
+
+-- Триггерную функцию снаружи звать незачем. EXECUTE по умолчанию выдан роли
+-- PUBLIC, поэтому забираем именно у неё (revoke от anon/authenticated не помог бы).
+-- На триггер это не влияет: права проверяются при создании триггера, не при срабатывании.
+revoke execute on function public.handle_new_user() from public;
 
 -- ---------- Row Level Security ----------
 

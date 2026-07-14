@@ -20,6 +20,17 @@ BroadcastChannel. Откройте, например, `/admin` и сайт в с
 
 ## Подключение Supabase (боевой режим)
 
+> **Проект уже создан и настроен:** `lagman-center` (регион Франкфурт).
+> Схема применена, меню залито, гостевой заказ и бронь проверены на живой базе.
+> Ключи для Vercel и локального `.env.local`:
+>
+> ```
+> NEXT_PUBLIC_SUPABASE_URL=https://jzpheztyxkonzpwcqylc.supabase.co
+> NEXT_PUBLIC_SUPABASE_ANON_KEY=<anon key из Project Settings → API Keys>
+> ```
+>
+> Инструкция ниже — на случай, если проект придётся пересоздать с нуля.
+
 1. Создайте проект на [supabase.com](https://supabase.com) (Free-плана достаточно).
 2. Откройте **SQL Editor → New query**, вставьте содержимое файла
    [`supabase/schema.sql`](supabase/schema.sql) целиком и нажмите **Run**.
