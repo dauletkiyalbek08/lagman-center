@@ -27,38 +27,65 @@ interface LogoProps {
   size?: "compact" | "large";
 }
 
+/**
+ * Два разных «замка» под разные места.
+ *
+ * large — вертикальный стек из фирменного стиля (клош, LAGMAN / CENTER,
+ * подпись). Он высокий, ~90px, и хорош там, где место есть: в подвале.
+ *
+ * compact — горизонтальный: клош слева, «LAGMAN CENTER» в одну строку.
+ * В шапке (h-20 = 80px) вертикальный стек не помещается вовсе — обрезался
+ * верхним краем, а подпись вываливалась под линию шапки на фото.
+ */
 export function Logo({ className, size = "compact" }: LogoProps) {
-  const large = size === "large";
+  if (size === "large") {
+    return (
+      <Link
+        href="/"
+        className={cn("inline-flex flex-col items-start leading-none", className)}
+        aria-label="Lagman Center — на главную"
+      >
+        <ClocheIcon className="mb-1 w-8 text-white" />
+        <span className="font-heading text-2xl font-black uppercase tracking-tight text-white">
+          Lagman
+        </span>
+        <span className="font-heading text-2xl font-black uppercase tracking-tight text-primary">
+          Center
+        </span>
+        <span className="mt-1 text-[11px] font-medium uppercase tracking-[0.35em] text-muted">
+          Cafe Loft
+        </span>
+      </Link>
+    );
+  }
+
   return (
     <Link
       href="/"
-      className={cn("inline-flex flex-col items-start leading-none", className)}
       aria-label="Lagman Center — на главную"
+      className={cn(
+        "group inline-flex shrink-0 items-center gap-2.5 rounded-btn",
+        "focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-primary",
+        className,
+      )}
     >
-      <ClocheIcon className={cn("text-white mb-1", large ? "w-8" : "w-6")} />
-      <span
-        className={cn(
-          "font-heading font-black uppercase tracking-tight text-white",
-          large ? "text-2xl" : "text-lg",
-        )}
-      >
-        Lagman
+      {/* Кант светлее фона: border-line (#2a2a2a) на bg-surface-2 (#232323)
+          почти не виден — плитка расплылась бы серым пятном */}
+      <span className="grid size-9 shrink-0 place-items-center rounded-btn border border-white/10 bg-surface-2 transition-colors duration-200 group-hover:border-primary/70 sm:size-10">
+        <ClocheIcon className="w-6 text-white sm:w-7" />
       </span>
-      <span
-        className={cn(
-          "font-heading font-black uppercase tracking-tight text-primary",
-          large ? "text-2xl" : "text-lg",
-        )}
-      >
-        Center
-      </span>
-      <span
-        className={cn(
-          "mt-1 uppercase text-muted font-medium",
-          large ? "text-[11px] tracking-[0.35em]" : "text-[9px] tracking-[0.3em]",
-        )}
-      >
-        Cafe Loft
+      <span className="flex flex-col leading-none">
+        {/* whitespace-nowrap обязателен: между 1024 и 1279px рядом с логотипом
+            уже стоит вся навигация, и без него надпись ломается на две строки */}
+        <span className="font-heading text-[17px] leading-none font-black tracking-tight whitespace-nowrap text-white uppercase">
+          Lagman <span className="text-primary">Center</span>
+        </span>
+        <span className="mt-1.5 flex items-center gap-1.5">
+          <span className="h-px w-3 bg-primary/80" aria-hidden />
+          <span className="text-[9px] leading-none font-medium tracking-[0.24em] text-white/45 uppercase">
+            Cafe Loft
+          </span>
+        </span>
       </span>
     </Link>
   );

@@ -31,7 +31,12 @@ export function SiteHeader() {
       <div className="mx-auto flex h-20 max-w-7xl items-center justify-between gap-4 px-4 sm:px-6">
         <Logo />
 
-        <nav className="hidden items-center gap-7 lg:flex" aria-label="Основная навигация">
+        {/* gap уже на lg: там логотип, всё меню, телефон и кнопка стоят впритык,
+            и «О нас» переносился на две строки */}
+        <nav
+          className="hidden items-center gap-5 lg:flex xl:gap-7"
+          aria-label="Основная навигация"
+        >
           {NAV_LINKS.map(({ href, label }) => {
             const active =
               href === "/" ? pathname === "/" : pathname.startsWith(href);
@@ -40,7 +45,7 @@ export function SiteHeader() {
                 key={href}
                 href={href}
                 className={cn(
-                  "relative py-1 text-sm font-medium transition-colors",
+                  "relative py-1 text-sm font-medium whitespace-nowrap transition-colors",
                   active
                     ? "text-white after:absolute after:-bottom-1 after:left-0 after:h-0.5 after:w-full after:rounded-full after:bg-primary"
                     : "text-muted hover:text-white",
@@ -95,12 +100,17 @@ export function SiteHeader() {
             </Link>
           )}
 
-          <Link
-            href="/menu"
-            className={cn(buttonClasses("primary", "sm"), "hidden md:inline-flex")}
-          >
-            Заказать доставку
-          </Link>
+          {/* Прячем обёрткой, а не классом на самой кнопке: cn() — простая
+              склейка строк, поэтому `hidden` и `inline-flex` из buttonClasses
+              оказались бы в одном классе, и кнопка не пряталась бы на телефоне */}
+          <div className="hidden md:block">
+            <Link
+              href="/menu"
+              className={buttonClasses("primary", "sm", "whitespace-nowrap")}
+            >
+              Заказать доставку
+            </Link>
+          </div>
 
           <button
             type="button"

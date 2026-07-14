@@ -28,9 +28,7 @@ export function StaffTopbar() {
     <header className="sticky top-0 z-50 border-b border-line bg-bg/90 backdrop-blur-md print:hidden">
       <div className="mx-auto flex h-16 max-w-7xl items-center justify-between gap-4 px-4 sm:px-6">
         <div className="flex items-center gap-5">
-          <div className="origin-left scale-75">
-            <Logo />
-          </div>
+          <Logo />
           <span className="hidden rounded-full border border-line bg-surface px-3 py-1 text-xs font-semibold uppercase tracking-wide text-muted sm:inline-block">
             Панель персонала
           </span>
