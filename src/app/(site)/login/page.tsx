@@ -6,14 +6,25 @@ import { Card, CardBody } from "@/components/ui/card";
 import { Input, Label } from "@/components/ui/field";
 import { PageLoader, Spinner } from "@/components/ui/spinner";
 import { useAuth } from "@/lib/auth-context";
-import { LogIn } from "lucide-react";
+import type { Role } from "@/lib/types";
+import { Eye, EyeOff, LogIn } from "lucide-react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState, type FormEvent } from "react";
 
+/** Куда ведём сотрудника после входа, если в ?next= ничего внятного нет. */
+function homeForRole(role: Role | undefined): string {
+  if (role === "admin") return "/admin";
+  if (role === "kitchen") return "/kitchen";
+  if (role === "courier") return "/courier";
+  // Клиент или роль не назначена — на главную, панелей у него нет
+  return "/";
+}
+
 function LoginForm() {
-  const { demo, loading, user, signIn } = useAuth();
+  const { demo, loading, user, profile, signIn } = useAuth();
   const router = useRouter();
+  const pathname = usePathname();
   const searchParams = useSearchParams();
 
   const nextParam = searchParams.get("next");
@@ -21,21 +32,30 @@ function LoginForm() {
   const next =
     nextParam && nextParam.startsWith("/") && !nextParam.startsWith("//")
       ? nextParam
-      : "/account";
+      : null;
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  // Уже авторизован — сразу в кабинет (или на страницу из ?next=)
+  // Единая точка ухода со страницы: и для «уже авторизован при заходе»,
+  // и сразу после успешного signIn. Роль (profile) приезжает чуть позже
+  // самой сессии, поэтому ждём, пока auth-context снимет loading.
   useEffect(() => {
-    if (!demo && !loading && user) {
+    if (demo || !user) return;
+    if (pathname !== "/login") return;
+    if (next) {
       router.replace(next);
+      return;
     }
-  }, [demo, loading, user, router, next]);
+    if (loading) return; // роль ещё неизвестна — подождём профиль
+    router.replace(homeForRole(profile?.role));
+  }, [demo, loading, user, profile, next, pathname, router]);
 
   if (demo) return <DemoAuthNotice />;
+  // Идёт проверка сессии или уже авторизован — редирект выше вот-вот сработает
   if (loading || user) return <PageLoader />;
 
   const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
@@ -44,7 +64,8 @@ function LoginForm() {
     setSubmitting(true);
     try {
       await signIn(email.trim(), password);
-      router.push(next);
+      // Дальше уводит useEffect: сначала дождёмся роли из профиля.
+      // submitting не сбрасываем — спиннер живёт до перехода.
     } catch (err) {
       setError(err instanceof Error ? err.message : "Не удалось войти");
       setSubmitting(false);
@@ -54,9 +75,13 @@ function LoginForm() {
   return (
     <Card>
       <CardBody className="p-6 sm:p-8">
-        <h1 className="font-heading text-2xl font-extrabold uppercase tracking-tight mb-6">
-          Вход <span className="text-primary">в аккаунт</span>
+        <h1 className="font-heading text-2xl font-extrabold uppercase tracking-tight">
+          Вход для <span className="text-primary">персонала</span>
         </h1>
+        <p className="mt-2 mb-6 text-sm text-muted">
+          Панели администратора, кухни и курьера. Логин и пароль выдаёт
+          администратор.
+        </p>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
@@ -71,17 +96,34 @@ function LoginForm() {
               required
             />
           </div>
+
           <div>
             <Label htmlFor="login-password">Пароль</Label>
-            <Input
-              id="login-password"
-              type="password"
-              autoComplete="current-password"
-              placeholder="••••••••"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-            />
+            <div className="relative">
+              <Input
+                id="login-password"
+                type={showPassword ? "text" : "password"}
+                autoComplete="current-password"
+                placeholder="••••••••"
+                className="pr-11"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((v) => !v)}
+                className="absolute inset-y-0 right-0 flex w-11 cursor-pointer items-center justify-center rounded-r-btn text-muted transition-colors hover:text-white"
+                aria-label={showPassword ? "Скрыть пароль" : "Показать пароль"}
+                title={showPassword ? "Скрыть пароль" : "Показать пароль"}
+              >
+                {showPassword ? (
+                  <EyeOff className="size-4" aria-hidden />
+                ) : (
+                  <Eye className="size-4" aria-hidden />
+                )}
+              </button>
+            </div>
           </div>
 
           {error && (
@@ -100,13 +142,12 @@ function LoginForm() {
           </Button>
         </form>
 
-        <p className="mt-6 text-center text-sm text-muted">
-          Нет аккаунта?{" "}
+        <p className="mt-6 text-center text-xs text-muted">
           <Link
-            href="/register"
-            className="font-semibold text-white underline-offset-4 hover:text-primary hover:underline"
+            href="/"
+            className="underline-offset-4 transition-colors hover:text-white hover:underline"
           >
-            Зарегистрироваться
+            Вернуться на сайт
           </Link>
         </p>
       </CardBody>

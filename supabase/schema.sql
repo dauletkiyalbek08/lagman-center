@@ -299,6 +299,200 @@ grant execute on function public.create_reservation(text, text, date, text, int,
 -- На триггер это не влияет: права проверяются при создании триггера, не при срабатывании.
 revoke execute on function public.handle_new_user() from public;
 
+-- ============================================================
+-- Управление сотрудниками из панели админа.
+-- Учётки создаёт БАЗА (security definer), а не браузер: иначе фронтенду
+-- пришлось бы отдать service_role-ключ, а он даёт полный доступ ко всему.
+-- Регистрации на сайте нет — гость заказывает без аккаунта, а логины
+-- и пароли персоналу выдаёт администратор.
+-- ============================================================
+
+create or replace function public.create_auth_user(
+  p_email text,
+  p_password text,
+  p_name text,
+  p_phone text
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_id uuid := gen_random_uuid();
+  v_email text := lower(btrim(p_email));
+begin
+  insert into auth.users (
+    instance_id, id, aud, role, email, encrypted_password, email_confirmed_at,
+    raw_app_meta_data, raw_user_meta_data, created_at, updated_at,
+    confirmation_token, recovery_token, email_change_token_new, email_change
+  )
+  values (
+    '00000000-0000-0000-0000-000000000000', v_id, 'authenticated', 'authenticated',
+    v_email,
+    extensions.crypt(p_password, extensions.gen_salt('bf')),
+    now(),  -- почта сразу подтверждена: письма сотрудникам не шлём
+    '{"provider":"email","providers":["email"]}'::jsonb,
+    jsonb_build_object('name', nullif(btrim(coalesce(p_name, '')), ''),
+                       'phone', nullif(btrim(coalesce(p_phone, '')), '')),
+    now(), now(), '', '', '', ''
+  );
+
+  insert into auth.identities (
+    id, provider_id, user_id, identity_data, provider,
+    last_sign_in_at, created_at, updated_at
+  )
+  values (
+    gen_random_uuid(), v_id::text, v_id,
+    jsonb_build_object('sub', v_id::text, 'email', v_email),
+    'email', now(), now(), now()
+  );
+
+  return v_id;
+end;
+$$;
+
+revoke execute on function public.create_auth_user(text, text, text, text) from public;
+
+create or replace function public.admin_create_staff(
+  p_email text,
+  p_password text,
+  p_name text,
+  p_phone text,
+  p_role text
+)
+returns public.profiles
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_id uuid;
+  v_profile public.profiles;
+begin
+  if public.my_role() <> 'admin' then
+    raise exception 'Добавлять сотрудников может только администратор';
+  end if;
+  if coalesce(p_role, '') not in ('admin', 'kitchen', 'courier', 'customer') then
+    raise exception 'Неизвестная роль';
+  end if;
+  if coalesce(btrim(p_email), '') = '' then
+    raise exception 'Укажите email';
+  end if;
+  if length(coalesce(p_password, '')) < 6 then
+    raise exception 'Пароль должен быть не короче 6 символов';
+  end if;
+  if exists (select 1 from auth.users where email = lower(btrim(p_email))) then
+    raise exception 'Сотрудник с таким email уже есть';
+  end if;
+
+  v_id := public.create_auth_user(p_email, p_password, p_name, p_phone);
+
+  update public.profiles
+     set role = p_role,
+         name = nullif(btrim(coalesce(p_name, '')), ''),
+         phone = nullif(btrim(coalesce(p_phone, '')), '')
+   where id = v_id
+   returning * into v_profile;
+
+  return v_profile;
+end;
+$$;
+
+create or replace function public.admin_delete_staff(p_user_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if public.my_role() <> 'admin' then
+    raise exception 'Удалять сотрудников может только администратор';
+  end if;
+  if p_user_id = auth.uid() then
+    raise exception 'Нельзя удалить самого себя';
+  end if;
+  delete from auth.users where id = p_user_id;
+end;
+$$;
+
+create or replace function public.admin_set_password(p_user_id uuid, p_password text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if public.my_role() <> 'admin' then
+    raise exception 'Менять пароли может только администратор';
+  end if;
+  if length(coalesce(p_password, '')) < 6 then
+    raise exception 'Пароль должен быть не короче 6 символов';
+  end if;
+  update auth.users
+     set encrypted_password = extensions.crypt(p_password, extensions.gen_salt('bf')),
+         updated_at = now()
+   where id = p_user_id;
+end;
+$$;
+
+-- Список сотрудников с email (в profiles почты нет, а auth.users закрыт)
+create or replace function public.admin_list_staff()
+returns table (
+  id uuid,
+  email text,
+  role text,
+  name text,
+  phone text,
+  created_at timestamptz
+)
+language sql
+security definer
+set search_path = public
+as $$
+  select p.id, u.email::text, p.role, p.name, p.phone, p.created_at
+  from public.profiles p
+  join auth.users u on u.id = p.id
+  where public.my_role() = 'admin'
+  order by p.created_at;
+$$;
+
+grant execute on function public.admin_create_staff(text, text, text, text, text) to authenticated;
+grant execute on function public.admin_delete_staff(uuid) to authenticated;
+grant execute on function public.admin_set_password(uuid, text) to authenticated;
+grant execute on function public.admin_list_staff() to authenticated;
+
+revoke execute on function public.admin_create_staff(text, text, text, text, text) from anon;
+revoke execute on function public.admin_delete_staff(uuid) from anon;
+revoke execute on function public.admin_set_password(uuid, text) from anon;
+revoke execute on function public.admin_list_staff() from anon;
+
+-- ---------- Хранилище фотографий блюд ----------
+
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values (
+  'menu', 'menu', true, 5242880,
+  array['image/jpeg', 'image/png', 'image/webp', 'image/avif', 'image/gif']
+)
+on conflict (id) do update
+  set public = excluded.public,
+      file_size_limit = excluded.file_size_limit,
+      allowed_mime_types = excluded.allowed_mime_types;
+
+create policy "menu images: public read"
+  on storage.objects for select
+  using (bucket_id = 'menu');
+create policy "menu images: admin upload"
+  on storage.objects for insert
+  with check (bucket_id = 'menu' and public.my_role() = 'admin');
+create policy "menu images: admin update"
+  on storage.objects for update
+  using (bucket_id = 'menu' and public.my_role() = 'admin')
+  with check (bucket_id = 'menu' and public.my_role() = 'admin');
+create policy "menu images: admin delete"
+  on storage.objects for delete
+  using (bucket_id = 'menu' and public.my_role() = 'admin');
+
 -- ---------- Row Level Security ----------
 
 alter table public.establishments enable row level security;
@@ -424,12 +618,15 @@ insert into public.menu_items (name, description, price, category, image_url, es
   ('Морс ягодный',        'Домашний морс из свежих ягод, 0.5 л',             590, 'Напитки',        '/images/morse.jpg',            'lagman-center'),
   ('Газированные напитки','Coca-Cola, Fanta, Sprite, 0.5 л',                 490, 'Напитки',        '/images/cola.jpg',             'lagman-center');
 
--- ============================================================
--- После выполнения схемы:
--- 1) Зарегистрируйтесь на сайте (/register).
--- 2) Назначьте себе роль администратора:
---    update public.profiles set role = 'admin'
---    where id = (select id from auth.users where email = 'ВАШ_EMAIL');
--- 3) Аккаунты кухни и курьера: сотрудник регистрируется на /register,
---    затем админ назначает роль в панели /admin (вкладка «Персонал»).
--- ============================================================
+-- ---------- Учётки персонала ----------
+-- Регистрации на сайте нет. Первого администратора заводим здесь, дальше он
+-- добавляет кухню и курьеров сам — в панели /admin, вкладка «Персонал».
+-- ПОМЕНЯЙТЕ ПАРОЛИ на свои перед боевым запуском.
+
+select public.create_auth_user('admin@lagmancenter.kz',   'Lagman-Admin-2026',   'Администратор', '+7 707 917 9404');
+select public.create_auth_user('kitchen@lagmancenter.kz', 'Lagman-Kitchen-2026', 'Кухня',         '+7 707 917 9404');
+select public.create_auth_user('courier@lagmancenter.kz', 'Lagman-Courier-2026', 'Курьер',        '+7 707 917 9404');
+
+update public.profiles p set role = 'admin'   from auth.users u where u.id = p.id and u.email = 'admin@lagmancenter.kz';
+update public.profiles p set role = 'kitchen' from auth.users u where u.id = p.id and u.email = 'kitchen@lagmancenter.kz';
+update public.profiles p set role = 'courier' from auth.users u where u.id = p.id and u.email = 'courier@lagmancenter.kz';

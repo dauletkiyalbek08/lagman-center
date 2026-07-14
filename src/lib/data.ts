@@ -14,10 +14,13 @@ import type {
   MenuItem,
   NewOrderInput,
   NewReservationInput,
+  NewStaffInput,
   Order,
   OrderStatus,
   Reservation,
   ReservationStatus,
+  Role,
+  StaffMember,
 } from "./types";
 
 export { isSupabaseConfigured };
@@ -98,6 +101,40 @@ export async function deleteMenuItem(id: string): Promise<void> {
   }
   const { error } = await supabase.from("menu_items").delete().eq("id", id);
   if (error) throw new Error(error.message);
+}
+
+/**
+ * Загружает фото блюда в бакет `menu` (Supabase Storage) и возвращает
+ * публичную ссылку. В демо-режиме файла грузить некуда, поэтому отдаём
+ * data-URL — картинка будет жить в этом браузере.
+ */
+export async function uploadMenuImage(file: File): Promise<string> {
+  const supabase = getSupabaseBrowser();
+  if (!supabase) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(new Error("Не удалось прочитать файл"));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  if (!file.type.startsWith("image/")) {
+    throw new Error("Можно загрузить только изображение");
+  }
+  if (file.size > 5 * 1024 * 1024) {
+    throw new Error("Файл больше 5 МБ — выберите фото поменьше");
+  }
+
+  const ext = (file.name.split(".").pop() || "jpg").toLowerCase();
+  const path = `dishes/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+  const { error } = await supabase.storage
+    .from("menu")
+    .upload(path, file, { cacheControl: "3600", upsert: false });
+  if (error) throw new Error(`Не удалось загрузить фото: ${error.message}`);
+
+  const { data } = supabase.storage.from("menu").getPublicUrl(path);
+  return data.publicUrl;
 }
 
 export function subscribeMenu(cb: () => void): () => void {
@@ -302,6 +339,75 @@ export async function updateReservationStatus(
     .from("reservations")
     .update({ status })
     .eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
+// ---------- Персонал ----------
+
+/**
+ * Учётки сотрудников заводит сама база (функции admin_* с security definer):
+ * создавать пользователей из браузера можно только сервисным ключом, а его
+ * нельзя отдавать во фронтенд — он даёт полный доступ ко всем данным.
+ */
+export async function fetchStaff(): Promise<StaffMember[]> {
+  const supabase = getSupabaseBrowser();
+  if (!supabase) return demo.demoFetchStaff();
+  const { data, error } = await supabase.rpc("admin_list_staff");
+  if (error) throw new Error(error.message);
+  return (data ?? []) as StaffMember[];
+}
+
+export async function createStaff(input: NewStaffInput): Promise<void> {
+  const supabase = getSupabaseBrowser();
+  if (!supabase) {
+    demo.demoCreateStaff(input);
+    return;
+  }
+  const { error } = await supabase.rpc("admin_create_staff", {
+    p_email: input.email,
+    p_password: input.password,
+    p_name: input.name,
+    p_phone: input.phone,
+    p_role: input.role,
+  });
+  if (error) throw new Error(error.message);
+}
+
+export async function updateStaffRole(id: string, role: Role): Promise<void> {
+  const supabase = getSupabaseBrowser();
+  if (!supabase) {
+    demo.demoUpdateStaffRole(id, role);
+    return;
+  }
+  const { error } = await supabase
+    .from("profiles")
+    .update({ role })
+    .eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
+export async function setStaffPassword(
+  id: string,
+  password: string,
+): Promise<void> {
+  const supabase = getSupabaseBrowser();
+  if (!supabase) return;
+  const { error } = await supabase.rpc("admin_set_password", {
+    p_user_id: id,
+    p_password: password,
+  });
+  if (error) throw new Error(error.message);
+}
+
+export async function deleteStaff(id: string): Promise<void> {
+  const supabase = getSupabaseBrowser();
+  if (!supabase) {
+    demo.demoDeleteStaff(id);
+    return;
+  }
+  const { error } = await supabase.rpc("admin_delete_staff", {
+    p_user_id: id,
+  });
   if (error) throw new Error(error.message);
 }
 

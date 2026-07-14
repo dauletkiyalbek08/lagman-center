@@ -79,6 +79,24 @@ export interface Profile {
   phone: string | null;
 }
 
+/** Сотрудник в панели администратора (профиль + email из auth) */
+export interface StaffMember {
+  id: string;
+  email: string;
+  role: Role;
+  name: string | null;
+  phone: string | null;
+  created_at: string;
+}
+
+export interface NewStaffInput {
+  email: string;
+  password: string;
+  name: string;
+  phone: string;
+  role: Role;
+}
+
 export interface NewOrderInput {
   address: string;
   phone: string;

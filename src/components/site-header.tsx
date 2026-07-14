@@ -2,7 +2,6 @@
 
 import { Logo } from "@/components/logo";
 import { buttonClasses } from "@/components/ui/button";
-import { useAuth } from "@/lib/auth-context";
 import { useCart } from "@/lib/cart-context";
 import { cn } from "@/lib/cn";
 import { CONTACTS, NAV_LINKS } from "@/lib/constants";
@@ -15,7 +14,6 @@ import { useState } from "react";
 export function SiteHeader() {
   const pathname = usePathname();
   const { count } = useCart();
-  const { user, demo } = useAuth();
   const [open, setOpen] = useState(false);
   const mounted = useMounted();
 
@@ -25,8 +23,6 @@ export function SiteHeader() {
     setPrevPathname(pathname);
     setOpen(false);
   }
-
-  const accountHref = demo || user ? "/account" : "/login";
 
   return (
     <header className="fixed inset-x-0 top-0 z-50 border-b border-line bg-bg/90 backdrop-blur-md">
@@ -77,9 +73,10 @@ export function SiteHeader() {
           </Link>
 
           <Link
-            href={accountHref}
+            href="/login"
             className="hidden rounded-btn p-2 text-muted transition-colors hover:bg-white/5 hover:text-white sm:block"
-            aria-label="Личный кабинет"
+            aria-label="Вход для персонала"
+            title="Вход для персонала"
           >
             <User className="size-5" aria-hidden />
           </Link>
@@ -133,8 +130,8 @@ export function SiteHeader() {
               <Link href="/menu" className={buttonClasses("primary", "md")}>
                 Заказать доставку
               </Link>
-              <Link href={accountHref} className={buttonClasses("secondary", "md")}>
-                Личный кабинет
+              <Link href="/login" className={buttonClasses("secondary", "md")}>
+                Вход для персонала
               </Link>
             </div>
           </nav>

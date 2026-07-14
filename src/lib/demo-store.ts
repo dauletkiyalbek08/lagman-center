@@ -13,10 +13,13 @@ import type {
   MenuItem,
   NewOrderInput,
   NewReservationInput,
+  NewStaffInput,
   Order,
   OrderStatus,
   Reservation,
   ReservationStatus,
+  Role,
+  StaffMember,
 } from "./types";
 
 const KEYS = {
@@ -24,11 +27,12 @@ const KEYS = {
   reservations: "lagman.demo.reservations",
   menu: "lagman.demo.menu",
   counter: "lagman.demo.counter",
+  staff: "lagman.demo.staff",
 } as const;
 
 const CHANNEL = "lagman-demo";
 
-type Topic = "orders" | "reservations" | "menu";
+type Topic = "orders" | "reservations" | "menu" | "staff";
 
 function isBrowser() {
   return typeof window !== "undefined";
@@ -287,4 +291,44 @@ export function demoDeleteMenuItem(id: string): void {
     demoFetchMenu().filter((m) => m.id !== id),
   );
   notify("menu");
+}
+
+// ---------- Персонал (демо) ----------
+
+/** В демо-режиме учётки ненастоящие: пароль не хранится, вход не нужен. */
+export function demoFetchStaff(): StaffMember[] {
+  return readJson<StaffMember[]>(KEYS.staff, []);
+}
+
+export function demoCreateStaff(input: NewStaffInput): void {
+  const staff = demoFetchStaff();
+  if (staff.some((s) => s.email === input.email.toLowerCase())) {
+    throw new Error("Сотрудник с таким email уже есть");
+  }
+  staff.push({
+    id: uid(),
+    email: input.email.toLowerCase(),
+    role: input.role,
+    name: input.name || null,
+    phone: input.phone || null,
+    created_at: new Date().toISOString(),
+  });
+  writeJson(KEYS.staff, staff);
+  notify("staff");
+}
+
+export function demoUpdateStaffRole(id: string, role: Role): void {
+  writeJson(
+    KEYS.staff,
+    demoFetchStaff().map((s) => (s.id === id ? { ...s, role } : s)),
+  );
+  notify("staff");
+}
+
+export function demoDeleteStaff(id: string): void {
+  writeJson(
+    KEYS.staff,
+    demoFetchStaff().filter((s) => s.id !== id),
+  );
+  notify("staff");
 }

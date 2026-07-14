@@ -85,18 +85,10 @@ export function OrderSuccess({
         <StatusTracker status={order.status} />
       </div>
 
-      {!canReadOrder && (
-        <p className="mt-4 text-center text-xs text-muted">
-          Статус обновляется автоматически.{" "}
-          <Link
-            href="/register"
-            className="text-white underline-offset-4 hover:underline"
-          >
-            Зарегистрируйтесь
-          </Link>
-          , чтобы все заказы хранились в личном кабинете.
-        </p>
-      )}
+      <p className="mt-4 text-center text-xs text-muted">
+        Статус заказа обновляется автоматически. Сохраните номер заявки — по нему
+        можно уточнить заказ по телефону.
+      </p>
 
       <Card className="mt-8">
         <CardBody className="p-6">
