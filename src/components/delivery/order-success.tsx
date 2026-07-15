@@ -1,9 +1,11 @@
 "use client";
 
+import { RatingBox } from "@/components/delivery/rating-box";
 import { StatusTracker } from "@/components/delivery/status-tracker";
 import { Button, buttonClasses } from "@/components/ui/button";
 import { Card, CardBody } from "@/components/ui/card";
 import { useAuth } from "@/lib/auth-context";
+import { ORDER_TYPE_LABELS } from "@/lib/constants";
 import {
   fetchOrder,
   fetchOrderStatus,
@@ -12,7 +14,13 @@ import {
 } from "@/lib/data";
 import { formatPrice } from "@/lib/format";
 import type { Order } from "@/lib/types";
-import { CheckCircle2, MapPin, UtensilsCrossed, Wallet } from "lucide-react";
+import {
+  CheckCircle2,
+  MapPin,
+  ShoppingBag,
+  UtensilsCrossed,
+  Wallet,
+} from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
@@ -38,6 +46,7 @@ export function OrderSuccess({
   }
 
   const dineIn = order.order_type === "dine_in";
+  const pickup = order.order_type === "pickup";
 
   // Владелец заказа (или демо-режим) читает строку целиком и слушает realtime
   const canReadOrder = !isSupabaseConfigured || Boolean(user);
@@ -83,7 +92,9 @@ export function OrderSuccess({
         <p className="max-w-md text-muted">
           {dineIn
             ? `Заказ уже на кухне. Подадим к столу №${order.table_number}.`
-            : "Ожидайте звонка для подтверждения. Мы готовим ваш заказ."}
+            : pickup
+              ? "Готовим ваш заказ. Позвоним, когда можно будет забрать."
+              : "Ожидайте звонка для подтверждения. Мы готовим ваш заказ."}
         </p>
       </div>
 
@@ -95,6 +106,13 @@ export function OrderSuccess({
         Статус заказа обновляется автоматически. Сохраните номер заявки — по нему
         можно уточнить заказ у персонала.
       </p>
+
+      {/* Оценка появляется, когда заказ завершён */}
+      {order.status === "delivered" && (
+        <div className="mt-6">
+          <RatingBox order={order} />
+        </div>
+      )}
 
       <Card className="mt-8">
         <CardBody className="p-6">
@@ -156,6 +174,23 @@ export function OrderSuccess({
                   aria-hidden
                 />
                 Оплата на кассе, когда будете уходить
+              </p>
+            </div>
+          ) : pickup ? (
+            <div className="mt-4 space-y-2 text-sm text-muted">
+              <p className="flex items-start gap-2">
+                <ShoppingBag
+                  className="mt-0.5 size-4 shrink-0 text-primary"
+                  aria-hidden
+                />
+                {ORDER_TYPE_LABELS.pickup} — заберёте сами из кафе
+              </p>
+              <p className="flex items-start gap-2">
+                <Wallet
+                  className="mt-0.5 size-4 shrink-0 text-primary"
+                  aria-hidden
+                />
+                Оплата на кассе при получении
               </p>
             </div>
           ) : (

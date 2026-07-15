@@ -73,9 +73,10 @@ create table public.orders (
   customer_id uuid references auth.users (id) on delete set null,
   status text not null default 'new'
     check (status in ('new', 'cooking', 'ready', 'delivering', 'delivered', 'cancelled')),
-  -- dine_in — заказ за столом по QR (без регистрации, оплата на кассе)
+  -- dine_in — заказ за столом по QR (без регистрации, оплата на кассе);
+  -- pickup — самовывоз (для вошедшего клиента, оплата на кассе)
   order_type text not null default 'delivery'
-    check (order_type in ('delivery', 'dine_in')),
+    check (order_type in ('delivery', 'dine_in', 'pickup')),
   table_id uuid references public.tables (id) on delete set null,
   -- номер стола копией: кухня и курьер не имеют прав на public.tables,
   -- а номер им нужен — так обходимся без join и без лишних политик
@@ -83,7 +84,7 @@ create table public.orders (
   -- сумма с доставкой
   total int not null default 0 check (total >= 0),
   delivery_fee int not null default 0 check (delivery_fee >= 0),
-  -- у заказа в зале адреса нет
+  -- у заказа в зале / на самовывоз адреса нет
   address text,
   phone text,
   customer_name text not null default '',
@@ -91,6 +92,10 @@ create table public.orders (
     check (payment_method in ('cash', 'card', 'kaspi', 'counter')),
   payment_status text not null default 'unpaid'
     check (payment_status in ('unpaid', 'paid')),
+  -- оценка заказа клиентом (для доставки — оценка курьера)
+  rating int check (rating between 1 and 5),
+  review_comment text,
+  rated_at timestamptz,
   comment text,
   courier_id uuid references auth.users (id) on delete set null,
   created_at timestamptz not null default now(),
@@ -214,6 +219,13 @@ $$;
 -- Цены и стоимость доставки считаются здесь, из базы: подделать их
 -- из devtools нельзя.
 -- ============================================================
+-- create_order: три сценария.
+--   dine_in  — гость за столом (QR), без регистрации, оплата на кассе;
+--   pickup   — самовывоз для вошедшего клиента, оплата на кассе, без адреса;
+--   delivery — для вошедшего клиента: адрес обязателен, + стоимость доставки.
+-- Цены и стоимость доставки считаются здесь, из базы: подделать их
+-- из devtools нельзя.
+-- ============================================================
 create or replace function public.create_order(
   p_order_type text,
   p_table_code text,
@@ -246,7 +258,7 @@ declare
   v_address text;
   v_phone text;
 begin
-  if coalesce(p_order_type, '') not in ('delivery', 'dine_in') then
+  if coalesce(p_order_type, '') not in ('delivery', 'dine_in', 'pickup') then
     raise exception 'Неизвестный тип заказа';
   end if;
   if coalesce(jsonb_array_length(p_items), 0) = 0 then
@@ -264,6 +276,19 @@ begin
     v_payment := 'counter';   -- в зале платят на кассе
     v_address := null;
     v_phone := nullif(btrim(coalesce(p_phone, '')), '');
+
+  elsif p_order_type = 'pickup' then
+    -- самовывоз: только для вошедшего клиента, оплата на кассе при получении
+    if auth.uid() is null then
+      raise exception 'Войдите или зарегистрируйтесь, чтобы оформить самовывоз';
+    end if;
+    if coalesce(btrim(p_phone), '') = '' then
+      raise exception 'Укажите телефон — позвоним, когда заказ будет готов';
+    end if;
+    v_payment := 'counter';
+    v_address := null;
+    v_phone := btrim(p_phone);
+
   else
     -- Доставка — только для зарегистрированных: курьеру нужен настоящий
     -- контакт, а гостя без аккаунта не с кем связать при отказе.
@@ -339,7 +364,7 @@ begin
        and v_subtotal >= v_settings.free_delivery_from then 0
       else coalesce(v_settings.delivery_fee, 0)
     end;
-  else
+  elsif p_order_type = 'dine_in' then
     -- гости сели за стол — отмечаем его занятым на карте зала
     update public.tables set is_occupied = true where id = v_table.id;
   end if;
@@ -365,6 +390,39 @@ security definer
 set search_path = public
 as $$
   select status from public.orders where id = p_order_id;
+$$;
+
+-- Оценка заказа клиентом (для доставки — оценка курьера).
+-- Через RPC, чтобы работало и для гостя (id заказа неугадываем): прямого
+-- UPDATE у клиента на чужую строку нет. Оценить можно только доставленный
+-- заказ и только один раз.
+create or replace function public.rate_order(
+  p_order_id uuid,
+  p_rating int,
+  p_comment text
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if p_rating is null or p_rating < 1 or p_rating > 5 then
+    raise exception 'Оценка — от 1 до 5 звёзд';
+  end if;
+
+  update public.orders
+     set rating = p_rating,
+         review_comment = nullif(btrim(coalesce(p_comment, '')), ''),
+         rated_at = now()
+   where id = p_order_id
+     and status = 'delivered'
+     and rating is null;
+
+  if not found then
+    raise exception 'Этот заказ нельзя оценить (он ещё не завершён или уже оценён)';
+  end if;
+end;
 $$;
 
 create or replace function public.create_reservation(
@@ -412,6 +470,7 @@ $$;
 grant execute on function public.create_order(text, text, text, text, text, text, text, jsonb)
   to anon, authenticated;
 grant execute on function public.order_status(uuid) to anon, authenticated;
+grant execute on function public.rate_order(uuid, int, text) to anon, authenticated;
 grant execute on function public.table_by_code(text) to anon, authenticated;
 grant execute on function public.create_reservation(text, text, date, text, int, text)
   to anon, authenticated;
@@ -772,6 +831,11 @@ create policy "orders: courier delivers"
   with check (
     public.my_role() = 'courier' and status in ('delivering', 'delivered')
   );
+-- Удаление (очистка истории и тестовых заказов) — только админ.
+-- Позиции заказа уходят каскадом вместе со строкой orders.
+create policy "orders: admin delete"
+  on public.orders for delete
+  using (public.my_role() = 'admin');
 
 -- Позиции заказа: пишутся только внутри create_order()
 create policy "order_items: customer reads own"
@@ -793,6 +857,9 @@ create policy "reservations: admin update"
   on public.reservations for update
   using (public.my_role() = 'admin')
   with check (public.my_role() = 'admin');
+create policy "reservations: admin delete"
+  on public.reservations for delete
+  using (public.my_role() = 'admin');
 
 -- ---------- Realtime ----------
 

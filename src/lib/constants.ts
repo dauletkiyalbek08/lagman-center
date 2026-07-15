@@ -60,13 +60,21 @@ export const ORDER_STATUS_LABELS: Record<OrderStatus, string> = {
 export const ORDER_TYPE_LABELS: Record<OrderType, string> = {
   delivery: "Доставка",
   dine_in: "В зале",
+  pickup: "Самовывоз",
 };
 
-/** Заказ в зале не «доставляют», а подают — подпись статуса зависит от типа. */
+/**
+ * Подпись статуса зависит от типа: в зале заказ «подают», самовывоз «выдают»,
+ * доставку «доставляют».
+ */
 export function orderStatusLabel(status: OrderStatus, type: OrderType): string {
   if (type === "dine_in") {
     if (status === "ready") return "Готов к подаче";
     if (status === "delivered") return "Подан";
+  }
+  if (type === "pickup") {
+    if (status === "ready") return "Готов к выдаче";
+    if (status === "delivered") return "Выдан";
   }
   return ORDER_STATUS_LABELS[status];
 }

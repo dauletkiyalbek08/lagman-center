@@ -5,19 +5,22 @@ import { cn } from "@/lib/cn";
 import {
   fetchOrders,
   fetchReservations,
+  fetchStaff,
   subscribeOrders,
   subscribeReservations,
 } from "@/lib/data";
-import type { Order, Reservation } from "@/lib/types";
+import type { Order, Reservation, StaffMember } from "@/lib/types";
 import {
   CalendarClock,
   ClipboardList,
   LayoutGrid,
   Settings,
+  Truck,
   Users,
   UtensilsCrossed,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { CouriersTab } from "./couriers-tab";
 import { MenuTab } from "./menu-tab";
 import { OrdersTab } from "./orders-tab";
 import { ReservationsTab } from "./reservations-tab";
@@ -30,6 +33,7 @@ type TabId =
   | "tables"
   | "menu"
   | "reservations"
+  | "couriers"
   | "staff"
   | "settings";
 
@@ -37,6 +41,7 @@ export function AdminPanel() {
   const [tab, setTab] = useState<TabId>("orders");
   const [orders, setOrders] = useState<Order[] | null>(null);
   const [reservations, setReservations] = useState<Reservation[] | null>(null);
+  const [couriers, setCouriers] = useState<StaffMember[]>([]);
 
   const loadOrders = useCallback(() => {
     fetchOrders()
@@ -47,6 +52,13 @@ export function AdminPanel() {
   const loadReservations = useCallback(() => {
     fetchReservations()
       .then(setReservations)
+      .catch(() => {});
+  }, []);
+
+  // список курьеров нужен для статистики и «Курьеров на линии»; меняется редко
+  const loadCouriers = useCallback(() => {
+    fetchStaff()
+      .then((list) => setCouriers(list.filter((s) => s.role === "courier")))
       .catch(() => {});
   }, []);
 
@@ -61,6 +73,10 @@ export function AdminPanel() {
     const un = subscribeReservations(loadReservations);
     return un;
   }, [loadReservations]);
+
+  useEffect(() => {
+    loadCouriers();
+  }, [loadCouriers]);
 
   const newOrdersCount =
     orders?.filter((o) => o.status === "new").length ?? 0;
@@ -82,6 +98,7 @@ export function AdminPanel() {
       icon: CalendarClock,
       badge: newReservationsCount,
     },
+    { id: "couriers", label: "Курьеры", icon: Truck, badge: 0 },
     { id: "staff", label: "Персонал", icon: Users, badge: 0 },
     { id: "settings", label: "Настройки", icon: Settings, badge: 0 },
   ];
@@ -123,7 +140,13 @@ export function AdminPanel() {
         })}
       </div>
 
-      {tab === "orders" && <OrdersTab orders={orders} refetch={loadOrders} />}
+      {tab === "orders" && (
+        <OrdersTab
+          orders={orders}
+          couriers={couriers}
+          refetch={loadOrders}
+        />
+      )}
       {tab === "tables" && (
         <TablesTab orders={orders} reservations={reservations} />
       )}
@@ -134,7 +157,10 @@ export function AdminPanel() {
           refetch={loadReservations}
         />
       )}
-      {tab === "staff" && <StaffTab />}
+      {tab === "couriers" && (
+        <CouriersTab couriers={couriers} orders={orders ?? []} />
+      )}
+      {tab === "staff" && <StaffTab onChange={loadCouriers} />}
       {tab === "settings" && <SettingsTab />}
     </div>
   );

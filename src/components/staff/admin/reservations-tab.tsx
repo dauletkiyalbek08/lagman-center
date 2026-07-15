@@ -7,13 +7,21 @@ import { PageLoader } from "@/components/ui/spinner";
 import { cn } from "@/lib/cn";
 import { ESTABLISHMENTS, RESERVATION_STATUS_LABELS } from "@/lib/constants";
 import {
+  deleteReservation,
   fetchTables,
   updateReservationStatus,
   updateReservationTable,
 } from "@/lib/data";
 import { formatDate } from "@/lib/format";
 import type { Reservation, ReservationStatus, Table } from "@/lib/types";
-import { CalendarClock, Clock, MapPin, Phone, Users } from "lucide-react";
+import {
+  CalendarClock,
+  Clock,
+  MapPin,
+  Phone,
+  Trash2,
+  Users,
+} from "lucide-react";
 import { useEffect, useState } from "react";
 
 const RESERVATION_STATUS_COLORS: Record<ReservationStatus, string> = {
@@ -70,6 +78,19 @@ export function ReservationsTab({
       refetch();
     } catch (e) {
       alert(e instanceof Error ? e.message : "Не удалось назначить стол");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const remove = async (r: Reservation) => {
+    if (!window.confirm(`Удалить бронь «${r.name}»?`)) return;
+    setBusyId(r.id);
+    try {
+      await deleteReservation(r.id);
+      refetch();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Не удалось удалить бронь");
     } finally {
       setBusyId(null);
     }
@@ -158,25 +179,37 @@ export function ReservationsTab({
                 </Select>
               )}
 
-              {r.status === "new" && (
-                <div className="flex flex-wrap gap-2 pt-1">
-                  <Button
-                    size="sm"
-                    disabled={busyId === r.id}
-                    onClick={() => setStatus(r.id, "confirmed")}
-                  >
-                    Подтвердить
-                  </Button>
-                  <Button
-                    variant="danger"
-                    size="sm"
-                    disabled={busyId === r.id}
-                    onClick={() => setStatus(r.id, "cancelled")}
-                  >
-                    Отменить
-                  </Button>
-                </div>
-              )}
+              <div className="flex flex-wrap gap-2 pt-1">
+                {r.status === "new" && (
+                  <>
+                    <Button
+                      size="sm"
+                      disabled={busyId === r.id}
+                      onClick={() => setStatus(r.id, "confirmed")}
+                    >
+                      Подтвердить
+                    </Button>
+                    <Button
+                      variant="danger"
+                      size="sm"
+                      disabled={busyId === r.id}
+                      onClick={() => setStatus(r.id, "cancelled")}
+                    >
+                      Отменить
+                    </Button>
+                  </>
+                )}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={busyId === r.id}
+                  onClick={() => remove(r)}
+                  title="Удалить бронь"
+                >
+                  <Trash2 className="size-3.5" aria-hidden />
+                  Удалить
+                </Button>
+              </div>
             </CardBody>
           </Card>
         );

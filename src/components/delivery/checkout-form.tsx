@@ -22,7 +22,9 @@ import {
   Banknote,
   CreditCard,
   Info,
+  ShoppingBag,
   Smartphone,
+  Truck,
   UserRound,
   UtensilsCrossed,
 } from "lucide-react";
@@ -36,16 +38,20 @@ const PAYMENT_ICONS: Record<DeliveryPaymentMethod, typeof Banknote> = {
   kaspi: Smartphone,
 };
 
+/** Доставка на адрес или самовывоз из кафе — выбирает вошедший клиент. */
+type Mode = "delivery" | "pickup";
+
 interface FieldErrors {
   phone?: string;
   address?: string;
 }
 
 /**
- * Оформление заказа. Два сценария:
+ * Оформление заказа. Три сценария:
  *  · гость за столом (QR) — без регистрации, оплата на кассе;
- *  · доставка — только для вошедшего клиента: курьеру нужен настоящий
- *    контакт, а к сумме добавляется стоимость доставки.
+ *  · доставка — только для вошедшего клиента: адрес + стоимость доставки;
+ *  · самовывоз — для вошедшего клиента: без адреса и без доставки, оплата
+ *    на кассе при получении.
  */
 export function CheckoutForm({
   onSuccess,
@@ -64,6 +70,7 @@ export function CheckoutForm({
       .catch(() => {});
   }, []);
 
+  const [mode, setMode] = useState<Mode>("delivery");
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [address, setAddress] = useState("");
@@ -84,10 +91,12 @@ export function CheckoutForm({
   }
 
   const dineIn = Boolean(table);
-  // В демо-режиме входа нет вовсе, поэтому доставку там не запираем
+  const isDelivery = !dineIn && mode === "delivery";
+  const isPickup = !dineIn && mode === "pickup";
+  // В демо-режиме входа нет вовсе, поэтому заказ на дом/навынос там не запираем
   const needsLogin = !dineIn && isSupabaseConfigured && !user;
 
-  const fee = dineIn ? 0 : deliveryFeeFor(subtotal, settings);
+  const fee = isDelivery ? deliveryFeeFor(subtotal, settings) : 0;
   const total = subtotal + fee;
 
   const handleSubmit = async (e: FormEvent) => {
@@ -96,7 +105,7 @@ export function CheckoutForm({
     if (!dineIn) {
       const errs: FieldErrors = {};
       if (!phone.trim()) errs.phone = "Укажите номер телефона";
-      if (!address.trim()) errs.address = "Укажите адрес доставки";
+      if (isDelivery && !address.trim()) errs.address = "Укажите адрес доставки";
       setFieldErrors(errs);
       if (errs.phone || errs.address) return;
     }
@@ -114,15 +123,24 @@ export function CheckoutForm({
               comment: comment.trim() || undefined,
               items,
             }
-          : {
-              order_type: "delivery",
-              address: address.trim(),
-              phone: phone.trim(),
-              customer_name: name.trim(),
-              payment_method: payment,
-              comment: comment.trim() || undefined,
-              items,
-            },
+          : isPickup
+            ? {
+                order_type: "pickup",
+                phone: phone.trim(),
+                customer_name: name.trim(),
+                payment_method: "counter",
+                comment: comment.trim() || undefined,
+                items,
+              }
+            : {
+                order_type: "delivery",
+                address: address.trim(),
+                phone: phone.trim(),
+                customer_name: name.trim(),
+                payment_method: payment,
+                comment: comment.trim() || undefined,
+                items,
+              },
       );
       onSuccess(order);
     } catch (err) {
@@ -141,12 +159,11 @@ export function CheckoutForm({
       <Card className="lg:sticky lg:top-24">
         <CardBody className="p-6">
           <h2 className="mb-2 font-heading text-lg font-extrabold uppercase">
-            Доставка
+            Доставка и самовывоз
           </h2>
           <p className="text-sm text-muted">
-            Чтобы заказать доставку, войдите по номеру телефона. Это займёт
-            полминуты: номер и пароль — больше ничего не нужно. Курьеру нужен
-            настоящий контакт и точный адрес.
+            Чтобы заказать доставку или самовывоз, войдите по номеру телефона.
+            Это займёт полминуты: номер и пароль — больше ничего не нужно.
           </p>
 
           <div className="mt-5 space-y-2">
@@ -179,7 +196,11 @@ export function CheckoutForm({
     <Card className="lg:sticky lg:top-24">
       <CardBody className="p-6">
         <h2 className="mb-5 font-heading text-lg font-extrabold uppercase">
-          {dineIn ? `Заказ за столом №${table!.number}` : "Оформление доставки"}
+          {dineIn
+            ? `Заказ за столом №${table!.number}`
+            : isPickup
+              ? "Самовывоз"
+              : "Оформление доставки"}
         </h2>
 
         {dineIn && (
@@ -187,6 +208,50 @@ export function CheckoutForm({
             <UtensilsCrossed className="mt-0.5 size-4 shrink-0" aria-hidden />
             Заказ уйдёт на кухню и его подадут к столу. Оплата на кассе, когда
             будете уходить.
+          </p>
+        )}
+
+        {/* Переключатель «Доставка / Самовывоз» — только вне режима стола */}
+        {!dineIn && (
+          <div className="mb-5 grid grid-cols-2 gap-2">
+            {(
+              [
+                { m: "delivery", label: "Доставка", Icon: Truck },
+                { m: "pickup", label: "Самовывоз", Icon: ShoppingBag },
+              ] as const
+            ).map(({ m, label, Icon }) => {
+              const active = mode === m;
+              return (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => {
+                    setMode(m);
+                    setFieldErrors({});
+                  }}
+                  className={cn(
+                    "flex items-center justify-center gap-2 rounded-btn border px-3 py-2.5 text-sm font-semibold transition-colors",
+                    active
+                      ? "border-primary bg-primary/10 text-white"
+                      : "border-line bg-surface-2 text-muted hover:border-white/30",
+                  )}
+                >
+                  <Icon
+                    className={cn("size-4", active && "text-primary")}
+                    aria-hidden
+                  />
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {isPickup && (
+          <p className="mb-5 flex items-start gap-2 rounded-btn border border-primary/30 bg-primary/10 px-3 py-2.5 text-sm text-primary">
+            <ShoppingBag className="mt-0.5 size-4 shrink-0" aria-hidden />
+            Заберёте сами из кафе. Позвоним, когда заказ будет готов. Оплата на
+            кассе при получении.
           </p>
         )}
 
@@ -206,30 +271,38 @@ export function CheckoutForm({
           </div>
 
           {!dineIn && (
-            <>
-              <div>
-                <Label htmlFor="checkout-phone">Телефон *</Label>
-                <Input
-                  id="checkout-phone"
-                  name="phone"
-                  type="tel"
-                  autoComplete="tel"
-                  placeholder="+7 ___ ___ ____"
-                  value={phone}
-                  onChange={(e) => {
-                    setPhone(e.target.value);
-                    setFieldErrors((f) => ({ ...f, phone: undefined }));
-                  }}
-                  aria-invalid={Boolean(fieldErrors.phone)}
-                  className={cn(fieldErrors.phone && "border-primary!")}
-                />
-                {fieldErrors.phone && (
-                  <p className="mt-1.5 text-xs text-primary">
-                    {fieldErrors.phone}
+            <div>
+              <Label htmlFor="checkout-phone">Телефон *</Label>
+              <Input
+                id="checkout-phone"
+                name="phone"
+                type="tel"
+                autoComplete="tel"
+                placeholder="+7 ___ ___ ____"
+                value={phone}
+                onChange={(e) => {
+                  setPhone(e.target.value);
+                  setFieldErrors((f) => ({ ...f, phone: undefined }));
+                }}
+                aria-invalid={Boolean(fieldErrors.phone)}
+                className={cn(fieldErrors.phone && "border-primary!")}
+              />
+              {fieldErrors.phone ? (
+                <p className="mt-1.5 text-xs text-primary">
+                  {fieldErrors.phone}
+                </p>
+              ) : (
+                isPickup && (
+                  <p className="mt-1.5 text-xs text-muted">
+                    Позвоним по нему, когда заказ будет готов.
                   </p>
-                )}
-              </div>
+                )
+              )}
+            </div>
+          )}
 
+          {isDelivery && (
+            <>
               <div>
                 <Label htmlFor="checkout-address">Адрес доставки *</Label>
                 <Textarea
@@ -319,7 +392,7 @@ export function CheckoutForm({
               <span>Блюда</span>
               <span className="tabular-nums">{formatPrice(subtotal)}</span>
             </div>
-            {!dineIn && (
+            {isDelivery && (
               <div className="flex items-center justify-between text-muted">
                 <span>Доставка</span>
                 <span className="tabular-nums">
@@ -353,7 +426,9 @@ export function CheckoutForm({
               ? "Отправляем…"
               : dineIn
                 ? "Отправить на кухню"
-                : "Оформить заказ"}
+                : isPickup
+                  ? "Оформить самовывоз"
+                  : "Оформить заказ"}
           </Button>
         </form>
       </CardBody>

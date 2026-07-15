@@ -11,6 +11,7 @@ import { SEED_MENU_ITEMS } from "./seed-data";
 import { getSupabaseBrowser } from "./supabase/client";
 import { isSupabaseConfigured } from "./supabase/config";
 import type {
+  CourierStats,
   GuestTable,
   MenuItem,
   NewOrderInput,
@@ -20,6 +21,7 @@ import type {
   Order,
   OrderStatus,
   PaymentStatus,
+  RatingInput,
   Reservation,
   ReservationStatus,
   Role,
@@ -53,6 +55,8 @@ function mapOrder(row: any): Order {
     customer_name: row.customer_name,
     payment_method: row.payment_method,
     payment_status: row.payment_status ?? "unpaid",
+    rating: row.rating ?? null,
+    review_comment: row.review_comment ?? null,
     comment: row.comment ?? null,
     courier_id: row.courier_id ?? null,
     created_at: row.created_at,
@@ -279,6 +283,51 @@ export async function updateOrderStatus(
   if (error) throw new Error(error.message);
 }
 
+/** Клиент оценивает доставленный заказ (звёзды + комментарий) — через RPC. */
+export async function rateOrder(
+  id: string,
+  input: RatingInput,
+): Promise<void> {
+  const supabase = getSupabaseBrowser();
+  if (!supabase) {
+    demo.demoRateOrder(id, input);
+    return;
+  }
+  const { error } = await supabase.rpc("rate_order", {
+    p_order_id: id,
+    p_rating: input.rating,
+    p_comment: input.comment ?? null,
+  });
+  if (error) throw new Error(error.message);
+}
+
+/** Удаление заказа (для теста/очистки истории) — доступно только админу. */
+export async function deleteOrder(id: string): Promise<void> {
+  const supabase = getSupabaseBrowser();
+  if (!supabase) {
+    demo.demoDeleteOrder(id);
+    return;
+  }
+  const { error } = await supabase.from("orders").delete().eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
+/**
+ * Очистка завершённых заказов (доставленные + отменённые) — кнопка «очистить
+ * историю» в админке. Возвращает, сколько удалено.
+ */
+export async function clearFinishedOrders(): Promise<number> {
+  const supabase = getSupabaseBrowser();
+  if (!supabase) return demo.demoClearFinishedOrders();
+  const { data, error } = await supabase
+    .from("orders")
+    .delete()
+    .in("status", ["delivered", "cancelled"])
+    .select("id");
+  if (error) throw new Error(error.message);
+  return data?.length ?? 0;
+}
+
 /** Отметка об оплате: в зале её ставит касса, при доставке — курьер/админ. */
 export async function updateOrderPayment(
   id: string,
@@ -498,6 +547,20 @@ export async function updateReservationStatus(
   if (error) throw new Error(error.message);
 }
 
+/** Удаление брони (для теста/очистки) — только админ. */
+export async function deleteReservation(id: string): Promise<void> {
+  const supabase = getSupabaseBrowser();
+  if (!supabase) {
+    demo.demoDeleteReservation(id);
+    return;
+  }
+  const { error } = await supabase
+    .from("reservations")
+    .delete()
+    .eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
 /** Админ сажает бронь за конкретный стол (или снимает привязку). */
 export async function updateReservationTable(
   id: string,
@@ -570,6 +633,41 @@ export async function setStaffPassword(
     p_password: password,
   });
   if (error) throw new Error(error.message);
+}
+
+/**
+ * Статистика по курьерам: считается на клиенте из уже загруженных заказов —
+ * админ и так видит все заказы, отдельный запрос не нужен. Онлайн-статус
+ * выводим из активных доставок (у кого сейчас есть заказ «в пути»).
+ */
+export function computeCourierStats(
+  couriers: StaffMember[],
+  orders: Order[],
+): CourierStats[] {
+  const todayKey = new Date().toDateString();
+
+  return couriers.map((c) => {
+    const mine = orders.filter((o) => o.courier_id === c.id);
+    const delivered = mine.filter((o) => o.status === "delivered");
+    const rated = delivered.filter((o) => o.rating != null);
+    const ratingSum = rated.reduce((s, o) => s + (o.rating ?? 0), 0);
+    const active = mine.filter((o) => o.status === "delivering").length;
+
+    return {
+      id: c.id,
+      name: c.name,
+      email: c.email,
+      phone: c.phone,
+      active,
+      deliveredToday: delivered.filter(
+        (o) => new Date(o.updated_at).toDateString() === todayKey,
+      ).length,
+      deliveredTotal: delivered.length,
+      rating: rated.length ? ratingSum / rated.length : null,
+      ratingCount: rated.length,
+      online: active > 0,
+    };
+  });
 }
 
 export async function deleteStaff(id: string): Promise<void> {

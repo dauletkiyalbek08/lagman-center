@@ -8,8 +8,11 @@ export type OrderStatus =
   | "delivered"
   | "cancelled";
 
-/** `dine_in` — заказ за столом по QR-коду, `delivery` — доставка на адрес */
-export type OrderType = "delivery" | "dine_in";
+/**
+ * `dine_in` — заказ за столом по QR-коду, `delivery` — доставка на адрес,
+ * `pickup` — самовывоз (клиент забирает сам).
+ */
+export type OrderType = "delivery" | "dine_in" | "pickup";
 
 export type PaymentStatus = "unpaid" | "paid";
 
@@ -73,12 +76,35 @@ export interface Order {
   customer_name: string;
   payment_method: PaymentMethod;
   payment_status: PaymentStatus;
+  /** Оценка клиента 1–5 (для доставки — оценка курьера); null — не оценён */
+  rating: number | null;
+  review_comment: string | null;
   comment: string | null;
   /** Курьер, забравший заказ в доставку */
   courier_id: string | null;
   created_at: string;
   updated_at: string;
   items: OrderItem[];
+}
+
+/** Курьер + агрегированная статистика (панель администратора) */
+export interface CourierStats {
+  id: string;
+  name: string | null;
+  email: string;
+  phone: string | null;
+  /** Активные доставки прямо сейчас (статус delivering) */
+  active: number;
+  /** Доставлено за сегодня */
+  deliveredToday: number;
+  /** Доставлено всего */
+  deliveredTotal: number;
+  /** Средняя оценка (null — пока не оценивали) */
+  rating: number | null;
+  /** Сколько оценок усреднено */
+  ratingCount: number;
+  /** true — прямо сейчас в пути */
+  online: boolean;
 }
 
 /** Стол в зале (панель администратора) */
@@ -161,6 +187,12 @@ export interface NewOrderInput {
   payment_method: PaymentMethod;
   comment?: string;
   items: CartItem[];
+}
+
+/** Оценка заказа клиентом */
+export interface RatingInput {
+  rating: number;
+  comment?: string;
 }
 
 export interface NewReservationInput {

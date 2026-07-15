@@ -93,7 +93,7 @@ function CredentialsNote({
   );
 }
 
-export function StaffTab() {
+export function StaffTab({ onChange }: { onChange?: () => void } = {}) {
   const { demo, user } = useAuth();
   const [staff, setStaff] = useState<StaffMember[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -109,13 +109,15 @@ export function StaffTab() {
       .then((list) => {
         setStaff(list);
         setError(null);
+        // список курьеров в других вкладках зависит от состава персонала
+        onChange?.();
       })
       .catch((e: unknown) => {
         setError(
           e instanceof Error ? e.message : "Не удалось загрузить сотрудников",
         );
       });
-  }, []);
+  }, [onChange]);
 
   useEffect(() => {
     load();

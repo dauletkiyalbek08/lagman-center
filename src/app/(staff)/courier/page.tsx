@@ -13,7 +13,7 @@ import {
   updateOrderStatus,
 } from "@/lib/data";
 import type { Order, OrderStatus } from "@/lib/types";
-import { Check, MapPin, Package, Phone, Truck } from "lucide-react";
+import { Check, MapPin, Package, Phone, Star, Truck } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 function mapsHref(address: string): string {
@@ -64,6 +64,22 @@ function CourierPanel() {
   );
 
   const ready = useMemo(() => byStatus("ready"), [byStatus]);
+
+  // Личная статистика курьера: доставлено сегодня/всего и средний рейтинг
+  const myStats = useMemo(() => {
+    const mine = orders.filter(
+      (o) => o.status === "delivered" && (demo || o.courier_id === user?.id),
+    );
+    const todayKey = new Date().toDateString();
+    const today = mine.filter(
+      (o) => new Date(o.updated_at).toDateString() === todayKey,
+    );
+    const rated = mine.filter((o) => o.rating != null);
+    const avg = rated.length
+      ? rated.reduce((s, o) => s + (o.rating ?? 0), 0) / rated.length
+      : null;
+    return { today: today.length, total: mine.length, avg, rated: rated.length };
+  }, [orders, demo, user]);
 
   // «У меня в доставке» — только свои заказы (в демо-режиме курьер один)
   const delivering = useMemo(
@@ -117,6 +133,38 @@ function CourierPanel() {
       <p className="mb-6 text-sm text-muted">
         Готовые заказы и ваши доставки. Список обновляется автоматически.
       </p>
+
+      {/* Личная статистика курьера */}
+      <div className="mb-6 grid grid-cols-3 gap-3 sm:max-w-md">
+        <div className="rounded-card border border-line bg-surface p-3 text-center">
+          <p className="font-heading text-2xl font-extrabold leading-none">
+            {myStats.today}
+          </p>
+          <p className="mt-1 text-xs text-muted">Сегодня</p>
+        </div>
+        <div className="rounded-card border border-line bg-surface p-3 text-center">
+          <p className="font-heading text-2xl font-extrabold leading-none">
+            {myStats.total}
+          </p>
+          <p className="mt-1 text-xs text-muted">Всего</p>
+        </div>
+        <div className="rounded-card border border-line bg-surface p-3 text-center">
+          <p className="flex items-center justify-center gap-1 font-heading text-2xl font-extrabold leading-none">
+            {myStats.avg != null ? (
+              <>
+                {myStats.avg.toFixed(1)}
+                <Star
+                  className="size-4 fill-amber-400 text-amber-400"
+                  aria-hidden
+                />
+              </>
+            ) : (
+              "—"
+            )}
+          </p>
+          <p className="mt-1 text-xs text-muted">Рейтинг</p>
+        </div>
+      </div>
 
       {notice && (
         <p className="mb-6 rounded-card border border-primary/40 bg-primary/10 px-4 py-3 text-sm text-primary">

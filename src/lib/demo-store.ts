@@ -19,6 +19,7 @@ import type {
   Order,
   OrderStatus,
   PaymentStatus,
+  RatingInput,
   Reservation,
   ReservationStatus,
   Role,
@@ -26,6 +27,10 @@ import type {
   StaffMember,
   Table,
 } from "./types";
+
+/** Курьеры «из коробки» в демо — чтобы вкладка «Курьеры» не пустовала. */
+const DEMO_COURIER_1 = "demo-courier-bekzat";
+const DEMO_COURIER_2 = "demo-courier-timur";
 
 const KEYS = {
   orders: "lagman.demo.orders",
@@ -136,6 +141,8 @@ function seedOrders(): Order[] {
     customer_name: "Гость",
     payment_method: "cash",
     payment_status: "unpaid",
+    rating: null,
+    review_comment: null,
     comment: null,
     courier_id: null,
     created_at: new Date(now - minutesAgo * 60_000).toISOString(),
@@ -172,6 +179,40 @@ function seedOrders(): Order[] {
       ["Шашлык из баранины", 2990, 2],
       ["Чай в чайнике", 690, 1],
     ]),
+    mk(39, "delivering", 12, {
+      customer_name: "Нурлан",
+      phone: "+7 702 333 4455",
+      address: "ул. Ауэзова 8, кв. 3",
+      payment_method: "card",
+      delivery_fee: 500,
+      courier_id: DEMO_COURIER_1,
+    }, [
+      ["Гуйру-лагман", 2690, 1],
+      ["Самса", 690, 2],
+    ]),
+    mk(38, "delivered", 55, {
+      customer_name: "Асель",
+      phone: "+7 707 222 1100",
+      address: "мкр. Лесной 4, кв. 12",
+      payment_method: "kaspi",
+      payment_status: "paid",
+      delivery_fee: 500,
+      courier_id: DEMO_COURIER_1,
+      rating: 5,
+      review_comment: "Быстро привезли, всё горячее!",
+    }, [
+      ["Лагман", 2490, 2],
+    ]),
+    mk(37, "ready", 8, {
+      order_type: "pickup",
+      customer_name: "Ержан",
+      phone: "+7 705 888 7766",
+      address: null,
+      payment_method: "counter",
+    }, [
+      ["Плов", 2190, 1],
+      ["Морс ягодный", 590, 1],
+    ]),
   ];
 }
 
@@ -202,11 +243,13 @@ export function demoCreateOrder(input: NewOrderInput): Order {
     0,
   );
   const dineIn = input.order_type === "dine_in";
+  const delivery = input.order_type === "delivery";
   const table = dineIn
     ? demoFetchTables().find((t) => t.code === input.table_code)
     : undefined;
   const settings = demoFetchSettings();
-  const fee = dineIn ? 0 : demoDeliveryFee(subtotal, settings);
+  // доставка — единственный тип со стоимостью доставки
+  const fee = delivery ? demoDeliveryFee(subtotal, settings) : 0;
 
   const order: Order = {
     id: uid(),
@@ -221,8 +264,11 @@ export function demoCreateOrder(input: NewOrderInput): Order {
     address: input.address ?? null,
     phone: input.phone ?? null,
     customer_name: input.customer_name,
-    payment_method: dineIn ? "counter" : input.payment_method,
+    // сам платит клиент только при доставке; в зале и на самовывоз — касса
+    payment_method: delivery ? input.payment_method : "counter",
     payment_status: "unpaid",
+    rating: null,
+    review_comment: null,
     comment: input.comment || null,
     courier_id: null,
     created_at: new Date().toISOString(),
@@ -261,6 +307,40 @@ export function demoUpdateOrderPayment(
     ),
   );
   notify("orders");
+}
+
+export function demoRateOrder(id: string, input: RatingInput): void {
+  writeJson(
+    KEYS.orders,
+    loadOrders().map((o) =>
+      o.id === id
+        ? {
+            ...o,
+            rating: input.rating,
+            review_comment: input.comment || null,
+          }
+        : o,
+    ),
+  );
+  notify("orders");
+}
+
+export function demoDeleteOrder(id: string): void {
+  writeJson(
+    KEYS.orders,
+    loadOrders().filter((o) => o.id !== id),
+  );
+  notify("orders");
+}
+
+export function demoClearFinishedOrders(): number {
+  const orders = loadOrders();
+  const kept = orders.filter(
+    (o) => o.status !== "delivered" && o.status !== "cancelled",
+  );
+  writeJson(KEYS.orders, kept);
+  notify("orders");
+  return orders.length - kept.length;
 }
 
 /** Курьер забирает заказ. false — если статус уже не ready (взял другой). */
@@ -424,6 +504,14 @@ export function demoUpdateReservationTable(
   notify("reservations");
 }
 
+export function demoDeleteReservation(id: string): void {
+  writeJson(
+    KEYS.reservations,
+    demoFetchReservations().filter((r) => r.id !== id),
+  );
+  notify("reservations");
+}
+
 // ---------- Меню ----------
 
 export function demoFetchMenu(): MenuItem[] {
@@ -449,9 +537,36 @@ export function demoDeleteMenuItem(id: string): void {
 
 // ---------- Персонал (демо) ----------
 
+/** Пара курьеров «из коробки», чтобы вкладка «Курьеры» была наглядной. */
+function seedStaff(): StaffMember[] {
+  const at = new Date().toISOString();
+  return [
+    {
+      id: DEMO_COURIER_1,
+      email: "bekzat@lagmancenter.kz",
+      role: "courier",
+      name: "Бекзат",
+      phone: "+7 707 111 0011",
+      created_at: at,
+    },
+    {
+      id: DEMO_COURIER_2,
+      email: "timur@lagmancenter.kz",
+      role: "courier",
+      name: "Тимур",
+      phone: "+7 707 222 0022",
+      created_at: at,
+    },
+  ];
+}
+
 /** В демо-режиме учётки ненастоящие: пароль не хранится, вход не нужен. */
 export function demoFetchStaff(): StaffMember[] {
-  return readJson<StaffMember[]>(KEYS.staff, []);
+  const existing = readJson<StaffMember[] | null>(KEYS.staff, null);
+  if (existing) return existing;
+  const seeded = seedStaff();
+  writeJson(KEYS.staff, seeded);
+  return seeded;
 }
 
 export function demoCreateStaff(input: NewStaffInput): void {

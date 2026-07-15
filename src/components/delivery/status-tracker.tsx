@@ -11,10 +11,15 @@ const DELIVERY_STEPS: OrderStatus[] = [
   "delivered",
 ];
 
-// В зале курьера нет: готовый заказ сразу подают к столу
-const DINE_IN_STEPS: OrderStatus[] = ["new", "cooking", "ready", "delivered"];
+// В зале и на самовывозе курьера нет: готовый заказ подают / выдают
+const NO_COURIER_STEPS: OrderStatus[] = [
+  "new",
+  "cooking",
+  "ready",
+  "delivered",
+];
 
-/** Горизонтальный трекер статуса заказа: Новая → … → Доставлен / Подан. */
+/** Горизонтальный трекер статуса заказа: Новая → … → Доставлен / Подан / Выдан. */
 export function StatusTracker({
   status,
   type = "delivery",
@@ -22,7 +27,7 @@ export function StatusTracker({
   status: OrderStatus;
   type?: OrderType;
 }) {
-  const STEPS = type === "dine_in" ? DINE_IN_STEPS : DELIVERY_STEPS;
+  const STEPS = type === "delivery" ? DELIVERY_STEPS : NO_COURIER_STEPS;
 
   if (status === "cancelled") {
     return (

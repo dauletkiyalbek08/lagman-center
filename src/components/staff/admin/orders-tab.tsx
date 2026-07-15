@@ -1,14 +1,20 @@
 "use client";
 
+import { Stars } from "@/components/delivery/rating-box";
 import { StatusBadge } from "@/components/staff/status-badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody } from "@/components/ui/card";
 import { PageLoader } from "@/components/ui/spinner";
 import { cn } from "@/lib/cn";
 import { PAYMENT_METHOD_LABELS } from "@/lib/constants";
-import { updateOrderPayment, updateOrderStatus } from "@/lib/data";
+import {
+  clearFinishedOrders,
+  deleteOrder,
+  updateOrderPayment,
+  updateOrderStatus,
+} from "@/lib/data";
 import { formatPrice, formatTime } from "@/lib/format";
-import type { Order, OrderStatus } from "@/lib/types";
+import type { Order, OrderStatus, StaffMember } from "@/lib/types";
 import {
   BellRing,
   ChevronDown,
@@ -18,11 +24,15 @@ import {
   MapPin,
   MessageSquare,
   Phone,
+  ShoppingBag,
+  Trash2,
+  Truck,
   User,
   UtensilsCrossed,
   Wallet,
 } from "lucide-react";
 import { useState } from "react";
+import { CouriersOnline, TodayStats } from "./couriers-tab";
 
 const KANBAN_COLUMNS: Array<{ status: OrderStatus; title: string }> = [
   { status: "new", title: "Новые" },
@@ -31,7 +41,7 @@ const KANBAN_COLUMNS: Array<{ status: OrderStatus; title: string }> = [
   { status: "delivering", title: "В пути" },
 ];
 
-/** Заказ в зале: «Стол №5». Доставка: «Доставка». */
+/** Тип заказа: «Стол №5» / «Самовывоз» / «Доставка». */
 function OrderTypeBadge({ order }: { order: Order }) {
   if (order.order_type === "dine_in") {
     return (
@@ -41,8 +51,17 @@ function OrderTypeBadge({ order }: { order: Order }) {
       </span>
     );
   }
+  if (order.order_type === "pickup") {
+    return (
+      <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-amber-500/40 bg-amber-500/15 px-2 py-0.5 text-xs font-semibold text-amber-400">
+        <ShoppingBag className="size-3" aria-hidden />
+        Самовывоз
+      </span>
+    );
+  }
   return (
     <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-line bg-surface-2 px-2 py-0.5 text-xs font-semibold text-muted">
+      <Truck className="size-3" aria-hidden />
       Доставка
     </span>
   );
@@ -50,13 +69,15 @@ function OrderTypeBadge({ order }: { order: Order }) {
 
 interface OrdersTabProps {
   orders: Order[] | null;
+  couriers: StaffMember[];
   refetch: () => void;
 }
 
-export function OrdersTab({ orders, refetch }: OrdersTabProps) {
+export function OrdersTab({ orders, couriers, refetch }: OrdersTabProps) {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [clearing, setClearing] = useState(false);
 
   if (!orders) return <PageLoader label="Загружаем заказы…" />;
 
@@ -94,6 +115,39 @@ export function OrdersTab({ orders, refetch }: OrdersTabProps) {
     }
   };
 
+  const removeOrder = async (o: Order) => {
+    if (!window.confirm(`Удалить заказ ${o.order_number} без возврата?`)) return;
+    setBusyId(o.id);
+    try {
+      await deleteOrder(o.id);
+      refetch();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Не удалось удалить заказ");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const clearHistory = async () => {
+    if (
+      !window.confirm(
+        "Удалить все завершённые и отменённые заказы? Это действие для очистки и теста — вернуть их будет нельзя.",
+      )
+    ) {
+      return;
+    }
+    setClearing(true);
+    try {
+      const n = await clearFinishedOrders();
+      refetch();
+      alert(n > 0 ? `Удалено заказов: ${n}` : "Завершённых заказов не было");
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Не удалось очистить историю");
+    } finally {
+      setClearing(false);
+    }
+  };
+
   const newOrders = orders.filter((o) => o.status === "new");
 
   const todayKey = new Date().toDateString();
@@ -105,6 +159,12 @@ export function OrdersTab({ orders, refetch }: OrdersTabProps) {
 
   return (
     <div className="space-y-8">
+      {/* Сводка дня + курьеры на линии (как на референсе) */}
+      <div className="grid gap-4 lg:grid-cols-2">
+        <TodayStats orders={orders} />
+        <CouriersOnline couriers={couriers} orders={orders} />
+      </div>
+
       {/* Новые заявки */}
       {newOrders.length > 0 && (
         <section aria-label="Новые заявки">
@@ -260,6 +320,17 @@ export function OrdersTab({ orders, refetch }: OrdersTabProps) {
                                   Подан к столу
                                 </Button>
                               )}
+                            {o.status === "ready" &&
+                              o.order_type === "pickup" && (
+                                <Button
+                                  variant="success"
+                                  size="sm"
+                                  disabled={busyId === o.id}
+                                  onClick={() => markServed(o)}
+                                >
+                                  Выдан клиенту
+                                </Button>
+                              )}
                             {o.payment_status === "unpaid" && (
                               <Button
                                 variant="secondary"
@@ -314,26 +385,56 @@ export function OrdersTab({ orders, refetch }: OrdersTabProps) {
                 Сегодня завершённых заказов пока нет.
               </p>
             ) : (
-              <ul className="divide-y divide-line">
-                {history.map((o) => (
-                  <li
-                    key={o.id}
-                    className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2.5 text-sm"
+              <>
+                <ul className="divide-y divide-line">
+                  {history.map((o) => (
+                    <li
+                      key={o.id}
+                      className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2.5 text-sm"
+                    >
+                      <span className="font-heading font-extrabold">
+                        {o.order_number}
+                      </span>
+                      <span className="text-muted">
+                        {formatTime(o.created_at)}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate">
+                        {o.order_type === "dine_in"
+                          ? `Стол №${o.table_number}`
+                          : o.customer_name || "Гость"}
+                      </span>
+                      {o.rating != null && (
+                        <Stars value={o.rating} size="size-3.5" />
+                      )}
+                      <span className="font-semibold">
+                        {formatPrice(o.total)}
+                      </span>
+                      <StatusBadge status={o.status} type={o.order_type} />
+                      <button
+                        type="button"
+                        onClick={() => removeOrder(o)}
+                        disabled={busyId === o.id}
+                        aria-label={`Удалить заказ ${o.order_number}`}
+                        title="Удалить заказ"
+                        className="cursor-pointer rounded-btn p-1 text-muted transition-colors hover:bg-primary/10 hover:text-primary disabled:opacity-50"
+                      >
+                        <Trash2 className="size-3.5" aria-hidden />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+                <div className="border-t border-line px-4 py-2.5">
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    disabled={clearing}
+                    onClick={clearHistory}
                   >
-                    <span className="font-heading font-extrabold">
-                      {o.order_number}
-                    </span>
-                    <span className="text-muted">{formatTime(o.created_at)}</span>
-                    <span className="min-w-0 flex-1 truncate">
-                      {o.order_type === "dine_in"
-                        ? `Стол №${o.table_number}`
-                        : o.customer_name || "Гость"}
-                    </span>
-                    <span className="font-semibold">{formatPrice(o.total)}</span>
-                    <StatusBadge status={o.status} type={o.order_type} />
-                  </li>
-                ))}
-              </ul>
+                    <Trash2 className="size-3.5" aria-hidden />
+                    Очистить историю
+                  </Button>
+                </div>
+              </>
             )}
           </div>
         )}
@@ -377,6 +478,14 @@ function OrderDetails({
               aria-hidden
             />
             Стол №{order.table_number} · заказ в зале
+          </p>
+        ) : order.order_type === "pickup" ? (
+          <p className="flex items-start gap-2">
+            <ShoppingBag
+              className="mt-0.5 size-4 shrink-0 text-muted"
+              aria-hidden
+            />
+            Самовывоз · клиент заберёт сам
           </p>
         ) : (
           <p className="flex items-start gap-2">
