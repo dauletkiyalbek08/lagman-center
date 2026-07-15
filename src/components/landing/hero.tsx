@@ -31,11 +31,14 @@ export function Hero() {
             Халяль кафе в Щучинске
           </p>
           <h1 className="mt-4 font-heading text-4xl font-black uppercase leading-[1.05] tracking-tight sm:text-5xl lg:text-6xl">
-            Вкусно. Быстро.
+            Лучшее халяльное
             <br />
-            <span className="text-primary">Халяль.</span>
+            <span className="text-primary">кафе</span>
           </h1>
-          <p className="mt-5 max-w-xl text-base text-muted sm:text-lg">
+          <p className="mt-5 font-heading text-xl font-extrabold uppercase tracking-tight sm:text-2xl">
+            Вкусно. Быстро. Халяль.
+          </p>
+          <p className="mt-4 max-w-xl text-base text-muted sm:text-lg">
             Лучший лагман в городе, сочный шашлык, ароматный плов и уютная
             атмосфера.
           </p>
