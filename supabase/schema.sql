@@ -49,6 +49,21 @@ create table public.settings (
 
 insert into public.settings (id) values (1);
 
+-- Рекламный баннер на главной (акция / праздник / комбо). Одна строка: id = 1.
+create table public.promo_banner (
+  id         int primary key default 1 check (id = 1),
+  is_active  boolean not null default false,
+  emoji      text not null default '🎉',
+  title      text not null default '',
+  body       text not null default '',
+  cta_label  text not null default '',
+  cta_href   text not null default '',
+  accent     text not null default 'red' check (accent in ('red', 'amber', 'emerald')),
+  updated_at timestamptz not null default now()
+);
+
+insert into public.promo_banner (id) values (1);
+
 -- Столы в зале. code — короткий код в QR-ссылке /t/<code>.
 create table public.tables (
   id uuid primary key default gen_random_uuid(),
@@ -172,6 +187,10 @@ create trigger orders_updated_at
 
 create trigger settings_updated_at
   before update on public.settings
+  for each row execute function public.set_updated_at();
+
+create trigger promo_banner_updated_at
+  before update on public.promo_banner
   for each row execute function public.set_updated_at();
 
 -- ---------- Роли: хелпер ----------
@@ -766,6 +785,15 @@ create policy "settings: public read"
   on public.settings for select using (true);
 create policy "settings: admin write"
   on public.settings for all
+  using (public.my_role() = 'admin')
+  with check (public.my_role() = 'admin');
+
+-- Баннер акции читают все (виден на главной), меняет только админ
+alter table public.promo_banner enable row level security;
+create policy "promo: public read"
+  on public.promo_banner for select using (true);
+create policy "promo: admin write"
+  on public.promo_banner for all
   using (public.my_role() = 'admin')
   with check (public.my_role() = 'admin');
 

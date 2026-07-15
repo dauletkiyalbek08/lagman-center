@@ -138,6 +138,23 @@ export interface Settings {
   min_order: number;
 }
 
+/** Цветовой акцент баннера под повод */
+export type PromoAccent = "red" | "amber" | "emerald";
+
+/** Рекламный баннер на главной: акция, праздник, комбо (одна строка в БД) */
+export interface PromoBanner {
+  /** false — баннер скрыт с сайта */
+  is_active: boolean;
+  emoji: string;
+  title: string;
+  body: string;
+  /** Текст кнопки; пусто — кнопки нет */
+  cta_label: string;
+  /** Куда ведёт кнопка, напр. /menu */
+  cta_href: string;
+  accent: PromoAccent;
+}
+
 export interface Reservation {
   id: string;
   name: string;

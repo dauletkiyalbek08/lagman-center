@@ -21,6 +21,7 @@ import type {
   Order,
   OrderStatus,
   PaymentStatus,
+  PromoBanner,
   RatingInput,
   Reservation,
   ReservationStatus,
@@ -496,6 +497,52 @@ export function deliveryFeeFor(subtotal: number, settings: Settings): number {
     return 0;
   }
   return settings.delivery_fee;
+}
+
+// ---------- Баннер акции на главной ----------
+
+const PROMO_COLUMNS =
+  "is_active, emoji, title, body, cta_label, cta_href, accent";
+
+export async function fetchPromoBanner(): Promise<PromoBanner> {
+  const supabase = getSupabaseBrowser();
+  if (!supabase) return demo.demoFetchPromoBanner();
+  const { data, error } = await supabase
+    .from("promo_banner")
+    .select(PROMO_COLUMNS)
+    .eq("id", 1)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return (data as PromoBanner | null) ?? demo.EMPTY_PROMO;
+}
+
+export async function savePromoBanner(promo: PromoBanner): Promise<void> {
+  const supabase = getSupabaseBrowser();
+  if (!supabase) {
+    demo.demoSavePromoBanner(promo);
+    return;
+  }
+  const { error } = await supabase
+    .from("promo_banner")
+    .update(promo)
+    .eq("id", 1);
+  if (error) throw new Error(error.message);
+}
+
+export function subscribePromoBanner(cb: () => void): () => void {
+  const supabase = getSupabaseBrowser();
+  if (!supabase) return demo.demoSubscribe("promo", cb);
+  const channel = supabase
+    .channel("promo-changes")
+    .on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "promo_banner" },
+      cb,
+    )
+    .subscribe();
+  return () => {
+    supabase.removeChannel(channel);
+  };
 }
 
 // ---------- Брони ----------

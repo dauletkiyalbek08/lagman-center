@@ -19,6 +19,7 @@ import type {
   Order,
   OrderStatus,
   PaymentStatus,
+  PromoBanner,
   RatingInput,
   Reservation,
   ReservationStatus,
@@ -40,11 +41,19 @@ const KEYS = {
   staff: "lagman.demo.staff",
   tables: "lagman.demo.tables",
   settings: "lagman.demo.settings",
+  promo: "lagman.demo.promo",
 } as const;
 
 const CHANNEL = "lagman-demo";
 
-type Topic = "orders" | "reservations" | "menu" | "staff" | "tables" | "settings";
+type Topic =
+  | "orders"
+  | "reservations"
+  | "menu"
+  | "staff"
+  | "tables"
+  | "settings"
+  | "promo";
 
 function isBrowser() {
   return typeof window !== "undefined";
@@ -459,6 +468,39 @@ function demoDeliveryFee(subtotal: number, settings: Settings): number {
     return 0;
   }
   return settings.delivery_fee;
+}
+
+// ---------- Баннер акции ----------
+
+/** Пустой баннер — когда строки в БД ещё нет. */
+export const EMPTY_PROMO: PromoBanner = {
+  is_active: false,
+  emoji: "🎉",
+  title: "",
+  body: "",
+  cta_label: "",
+  cta_href: "",
+  accent: "red",
+};
+
+/** В демо баннер сразу включён — чтобы было видно, как он выглядит. */
+const DEMO_PROMO: PromoBanner = {
+  is_active: true,
+  emoji: "🎉",
+  title: "Комбо к празднику −20%",
+  body: "Лагман + шашлык + чай по специальной цене всю неделю. Успейте попробовать!",
+  cta_label: "Смотреть меню",
+  cta_href: "/menu",
+  accent: "red",
+};
+
+export function demoFetchPromoBanner(): PromoBanner {
+  return readJson<PromoBanner>(KEYS.promo, DEMO_PROMO);
+}
+
+export function demoSavePromoBanner(promo: PromoBanner): void {
+  writeJson(KEYS.promo, promo);
+  notify("promo");
 }
 
 // ---------- Брони ----------

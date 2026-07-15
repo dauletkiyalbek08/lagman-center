@@ -14,6 +14,7 @@ import {
   CalendarClock,
   ClipboardList,
   LayoutGrid,
+  Megaphone,
   Settings,
   Truck,
   Users,
@@ -23,6 +24,7 @@ import { useCallback, useEffect, useState } from "react";
 import { CouriersTab } from "./couriers-tab";
 import { MenuTab } from "./menu-tab";
 import { OrdersTab } from "./orders-tab";
+import { PromoTab } from "./promo-tab";
 import { ReservationsTab } from "./reservations-tab";
 import { SettingsTab } from "./settings-tab";
 import { StaffTab } from "./staff-tab";
@@ -35,6 +37,7 @@ type TabId =
   | "reservations"
   | "couriers"
   | "staff"
+  | "promo"
   | "settings";
 
 export function AdminPanel() {
@@ -100,6 +103,7 @@ export function AdminPanel() {
     },
     { id: "couriers", label: "Курьеры", icon: Truck, badge: 0 },
     { id: "staff", label: "Персонал", icon: Users, badge: 0 },
+    { id: "promo", label: "Баннер", icon: Megaphone, badge: 0 },
     { id: "settings", label: "Настройки", icon: Settings, badge: 0 },
   ];
 
@@ -161,6 +165,7 @@ export function AdminPanel() {
         <CouriersTab couriers={couriers} orders={orders ?? []} />
       )}
       {tab === "staff" && <StaffTab onChange={loadCouriers} />}
+      {tab === "promo" && <PromoTab />}
       {tab === "settings" && <SettingsTab />}
     </div>
   );
